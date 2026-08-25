@@ -8,12 +8,15 @@ The product deliberately has no social profile photos, video, stories, reels, or
 
 ### 1. Identity onboarding
 
-- Aadhaar-card upload shaped onboarding flow
-- development-only card reading adapter
+- Aadhaar-card photo upload flow
+- backend OCR using Tesseract.js
+- likely English name extraction from OCR text
 - extracted-name confirmation/editing screen
 - username selection
-- verified identity reference mapped to an internal user UUID
+- development identity-verification reference mapped to an internal user UUID
 - no permanent Aadhaar-card image field in the social database
+
+The OCR piece is implemented. Live UIDAI Aadhaar authentication is still represented by the development verification reference and remains behind the replaceable identity adapter.
 
 ### 2. Member discovery
 
@@ -60,12 +63,14 @@ The product deliberately has no social profile photos, video, stories, reels, or
 
 ```text
 apps/web      React + Vite web client
-apps/api      Fastify API + Prisma ORM
+apps/api      Fastify API + Prisma ORM + Tesseract OCR
 PostgreSQL    persistent database
 
 Browser -> API -> PostgreSQL
              |
-             -> Identity adapter
+             +-> temporary OCR card scan
+             |
+             -> Identity verification adapter
 ```
 
 The backend remains the canonical application layer so later clients can use the same API without changing the social data model.
@@ -135,6 +140,8 @@ API health check:
 http://localhost:3001/health
 ```
 
+The first OCR operation may need to obtain Tesseract's English recognition data. After the card is read, the image is not written to the AbbasiConnect database.
+
 ## Upgrading an earlier local AbbasiConnect database
 
 If you already ran the old three-table starter locally, pull the latest code and run:
@@ -151,15 +158,15 @@ Prisma will create/apply the local migration needed for the expanded schema.
 
 ## Development onboarding
 
-The current UI starts with an Aadhaar-card shaped upload flow, but the development adapter is not a real Aadhaar OCR/authentication service.
+Use a test Aadhaar-like image for local development. The OCR engine will attempt to read it and identify the likely name. You can edit the detected name before registration.
 
-Use a test image and a fake verification reference such as:
+For the verification stage use a fake reference such as:
 
 ```text
 DEV-ABBASI-001
 ```
 
-Do not upload a real Aadhaar card or use a real Aadhaar number with the development endpoints.
+The fake reference stands in for the unique reference that a production Aadhaar verification adapter would return after successful verification.
 
 The production boundary is documented in `docs/AADHAAR_INTEGRATION.md`.
 
@@ -206,8 +213,8 @@ PATCH  /moderation/reports/:id
 
 ## What remains intentionally deferred
 
-- production OCR/secure QR extraction
-- live Aadhaar verification/provider integration
+- verified Aadhaar QR/offline e-KYC parsing
+- live UIDAI/Aadhaar authentication provider integration
 - notifications
 - public deployment
 - mobile clients
