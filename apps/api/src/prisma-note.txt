@@ -1,0 +1,1 @@
+The generated Prisma client is created under src/generated/prisma by `npm run db:generate`. This directory is generated code and should not be hand-edited.
