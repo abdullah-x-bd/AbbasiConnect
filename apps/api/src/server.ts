@@ -5,6 +5,7 @@ import { z } from "zod";
 import { config } from "./config.js";
 import { prisma } from "./db.js";
 import { hashIdentityReference } from "./identity.js";
+import { scanAadhaarImage } from "./aadhaarOcr.js";
 import type { AuthTokenPayload } from "./types.js";
 
 const app = Fastify({ logger: true });
@@ -93,13 +94,20 @@ app.post("/auth/dev-aadhaar/scan", async (request, reply) => {
 
   if (!body.success) return reply.code(400).send({ error: "Upload a valid test image under 6 MB" });
 
-  return {
-    mode: "development-simulator",
-    extracted: {
-      displayName: guessNameFromFile(body.data.fileName),
-    },
-    note: "The development scanner does not persist the uploaded image. Replace this adapter with verified OCR/QR and Aadhaar verification in production.",
-  };
+  try {
+    const scan = await scanAadhaarImage(body.data.imageDataUrl);
+    return {
+      mode: "development-ocr",
+      extracted: {
+        displayName: scan.displayName || guessNameFromFile(body.data.fileName),
+        confidence: scan.confidence,
+      },
+      note: "The development OCR adapter reads the uploaded image in memory and does not persist it. Aadhaar authenticity verification remains a separate production adapter.",
+    };
+  } catch (error) {
+    request.log.error(error);
+    return reply.code(422).send({ error: "OCR could not read this image. Try a clearer, front-facing test image." });
+  }
 });
 
 app.post("/auth/dev-aadhaar", async (request, reply) => {
