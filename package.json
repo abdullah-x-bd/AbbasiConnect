@@ -9,6 +9,7 @@
     "dev:api": "npm run dev -w @abbasiconnect/api",
     "dev:web": "npm run dev -w @abbasiconnect/web",
     "db:generate": "npm run db:generate -w @abbasiconnect/api",
+    "db:init": "npm run db:init -w @abbasiconnect/api",
     "db:migrate": "npm run db:migrate -w @abbasiconnect/api",
     "db:studio": "npm run db:studio -w @abbasiconnect/api",
     "build": "npm run build -w @abbasiconnect/api && npm run build -w @abbasiconnect/web"
