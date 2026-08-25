@@ -21,6 +21,7 @@
     "dotenv": "latest",
     "fastify": "latest",
     "pg": "latest",
+    "tesseract.js": "7.0.0",
     "zod": "latest"
   },
   "devDependencies": {
