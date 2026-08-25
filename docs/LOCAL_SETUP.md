@@ -4,7 +4,7 @@ This is the exact local-development path for the starter repository.
 
 ## 1. Install prerequisites
 
-Install Node.js 20 or newer and Docker Desktop.
+Install Node.js 22 LTS and Docker Desktop.
 
 Verify them:
 
@@ -80,7 +80,7 @@ npm run db:generate
 ## 8. Create database tables
 
 ```bash
-npm run db:migrate -- --name init
+npm run db:init
 ```
 
 ## 9. Start both applications
