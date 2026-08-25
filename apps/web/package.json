@@ -13,8 +13,7 @@
     "vite": "latest",
     "typescript": "latest",
     "react": "latest",
-    "react-dom": "latest",
-    "tesseract.js": "7.0.0"
+    "react-dom": "latest"
   },
   "devDependencies": {
     "@types/react": "latest",
