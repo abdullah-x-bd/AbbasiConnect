@@ -1,52 +1,55 @@
 # Aadhaar onboarding and integration boundary
 
-AbbasiConnect now models the intended onboarding UX while keeping real Aadhaar authentication behind a replaceable identity adapter.
+AbbasiConnect now models the intended onboarding UX and performs real OCR extraction, while keeping UIDAI-backed Aadhaar authentication behind a replaceable identity adapter.
 
 ## Intended user flow
 
 ```text
 1. User chooses/takes a photo of Aadhaar
-2. Identity adapter reads the card
-3. Extracted name is shown to the user
-4. User can edit the public display name
-5. User chooses an AbbasiConnect username
-6. Aadhaar identity is verified
-7. Backend receives a verified provider reference
-8. AbbasiConnect creates/finds the internal User
-9. AbbasiConnect issues its own session
-10. Card image is discarded
+2. OCR reads the card
+3. Likely name is extracted
+4. Extracted name is shown to the user
+5. User can edit the public display name
+6. User chooses an AbbasiConnect username
+7. Aadhaar identity is verified
+8. Backend receives a verified provider reference
+9. AbbasiConnect creates/finds the internal User
+10. AbbasiConnect issues its own session
+11. Card image is discarded
 ```
 
 The Aadhaar card itself is an onboarding input, not a profile photo and not a permanent social-media asset.
 
 ## Development implementation
 
-The web app includes the complete two-step onboarding screen:
+The web app includes the two-step onboarding screen:
 
 - upload a test card image
-- review/edit the detected-name field
-- choose a username
-- provide a development verification reference
-- register the account
+- backend reads the image with Tesseract.js OCR
+- a likely English name is extracted from the OCR text
+- user reviews/edits the detected name
+- user chooses a username
+- user supplies a development verification reference
+- account is registered
 
-`POST /auth/dev-aadhaar/scan` accepts the temporary test image as a data URL and returns simulated extraction output. The development adapter does not persist the uploaded image.
+`POST /auth/dev-aadhaar/scan` accepts the temporary image as a data URL. The backend OCR worker processes it in memory and returns only the extracted display-name candidate and OCR confidence. The image is not written to PostgreSQL.
 
 `POST /auth/dev-aadhaar` turns the development verification reference into a one-way identity hash and creates or retrieves the account.
 
-Do not use a real Aadhaar card or real Aadhaar number with the development endpoints.
+The development reference is the remaining simulation. It stands in for the provider reference that a real Aadhaar verification integration would return.
 
-## Production extraction
+## Production extraction and verification
 
-The production adapter should not treat OCR text alone as proof that the Aadhaar document is authentic.
+OCR is useful for quickly populating user-facing fields, but OCR text by itself does not prove an Aadhaar document is genuine.
 
-A practical production pipeline is:
+The production pipeline should therefore evolve toward:
 
 ```text
 card image / offline Aadhaar data
         |
         +--> OCR for user-facing field extraction
         |
-        +--> Aadhaar QR or digitally signed offline e-KYC verification where available
+        +--> Aadhaar secure QR or digitally signed offline e-KYC verification
         |
         +--> authorized online Aadhaar authentication when configured
         |
@@ -54,7 +57,7 @@ card image / offline Aadhaar data
 VerifiedIdentity
 ```
 
-OCR can populate fields such as the person's name so the onboarding form feels instant. Verification should be performed through an Aadhaar verification mechanism rather than trusting the OCR output itself.
+UIDAI's Paperless Offline e-KYC contains digitally signed demographic data and a reference rather than requiring the service provider to store the full Aadhaar number. That is a stronger verification source than OCR alone.
 
 ## Data handling boundary
 
@@ -70,7 +73,7 @@ The social database should contain only what AbbasiConnect needs after verificat
 
 It should not use the raw Aadhaar number as the user ID.
 
-The normal target is also not to retain the uploaded Aadhaar card image after verification.
+The uploaded Aadhaar image is not part of the social-media data model and should remain temporary.
 
 ## Production adapter contract
 
@@ -98,4 +101,4 @@ Everything after that point uses the AbbasiConnect UUID rather than Aadhaar cred
 
 ## Return login
 
-Aadhaar verification is primarily the identity-establishment event. After registration, ordinary visits should use the AbbasiConnect session. A future login design can add device-bound sessions, passkeys, or another low-friction re-authentication path while preserving the verified identity established during onboarding.
+Aadhaar verification is primarily the identity-establishment event. After registration, ordinary visits use the AbbasiConnect session. A future login design can add device-bound sessions, passkeys, or another low-friction re-authentication path while preserving the verified identity established during onboarding.
