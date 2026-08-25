@@ -14,8 +14,8 @@
   "dependencies": {
     "@fastify/cors": "latest",
     "@fastify/jwt": "latest",
-    "@prisma/adapter-pg": "latest",
-    "@prisma/client": "latest",
+    "@prisma/adapter-pg": "7.9.1",
+    "@prisma/client": "7.9.1",
     "dotenv": "latest",
     "fastify": "latest",
     "pg": "latest",
@@ -24,7 +24,7 @@
   "devDependencies": {
     "@types/node": "latest",
     "@types/pg": "latest",
-    "prisma": "latest",
+    "prisma": "7.9.1",
     "tsx": "latest",
     "typescript": "latest"
   }
