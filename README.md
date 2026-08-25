@@ -2,18 +2,59 @@
 
 AbbasiConnect is a minimal, text-only social platform built around verified human identity.
 
-The first version deliberately has no photo uploads, video, stories, reels, or media infrastructure. The goal is to make the smallest useful social network first.
+The product deliberately has no social profile photos, video, stories, reels, or media feed. Aadhaar card imagery is treated only as temporary identity-onboarding input.
 
-## MVP
+## Implemented product scope
 
-- identity-first onboarding
-- Aadhaar-ready verification layer
-- text-only feed
-- create text posts
-- profiles
-- follow and unfollow people
-- PostgreSQL database
-- separate web frontend and backend API so a mobile app can reuse the same backend later
+### 1. Identity onboarding
+
+- Aadhaar-card upload shaped onboarding flow
+- development-only card reading adapter
+- extracted-name confirmation/editing screen
+- username selection
+- verified identity reference mapped to an internal user UUID
+- no permanent Aadhaar-card image field in the social database
+
+### 2. Member discovery
+
+- search by display name
+- search by username
+- blocked/suspended accounts excluded from discovery
+
+### 3. Profiles and connections
+
+- public text profile
+- editable display name
+- editable username
+- short bio
+- follower/following counts
+- follow/unfollow
+- member post history
+
+### 4. Replies
+
+- text replies on posts
+- reply counts
+- nested reply display under the parent post
+
+### 5. Likes
+
+- like/unlike posts and replies
+- like counts
+- current-user like state
+
+### 6. Safety and moderation
+
+- block members
+- blocking removes follows in both directions
+- blocked members no longer appear to each other in feed/search/profile access
+- report posts or members
+- moderator/admin roles
+- moderation queue
+- mark reports reviewed
+- dismiss reports
+- hide/restore posts
+- suspend/restore users
 
 ## Architecture
 
@@ -22,160 +63,153 @@ apps/web      React + Vite web client
 apps/api      Fastify API + Prisma ORM
 PostgreSQL    persistent database
 
-Web browser -> API -> PostgreSQL
-                  |
-                  -> Identity verification adapter
-
-Future mobile app -> same API -> same PostgreSQL
+Browser -> API -> PostgreSQL
+             |
+             -> Identity adapter
 ```
 
-The repository ships with a development-only Aadhaar simulator. It does not ask for or store a real Aadhaar number. In production, the adapter can be replaced by an authorized Aadhaar authentication integration or a compliant offline e-KYC verification flow.
+The backend remains the canonical application layer so later clients can use the same API without changing the social data model.
 
 ## Data model
 
 - `User`
 - `Post`
 - `Follow`
+- `Like`
+- `Block`
+- `Report`
 
-The app stores an internal identity reference hash, not a raw Aadhaar number.
+Replies are represented as posts with `parentId`.
 
-## Quick start
+## Fresh local setup
 
-### 1. Requirements
+Requirements:
 
-Install:
-
-- Node.js 22 LTS recommended, or another version supported by current Prisma and Vite
+- Node.js 22 LTS recommended
 - npm
-- Docker Desktop, for the easiest local PostgreSQL setup
-
-### 2. Clone
+- Docker Desktop
 
 ```bash
 git clone https://github.com/abdullah-x-bd/AbbasiConnect.git
 cd AbbasiConnect
-```
-
-### 3. Install packages
-
-```bash
 npm install
-```
-
-### 4. Start PostgreSQL
-
-```bash
 docker compose up -d db
-```
-
-This creates a local database with:
-
-- host: `localhost`
-- port: `5432`
-- database: `abbasiconnect`
-- username: `abbasi`
-- password: `abbasi_dev_password`
-
-### 5. Configure the backend
-
-macOS/Linux:
-
-```bash
-cp apps/api/.env.example apps/api/.env
 ```
 
 Windows PowerShell:
 
 ```powershell
 Copy-Item apps/api/.env.example apps/api/.env
+Copy-Item apps/web/.env.example apps/web/.env
 ```
-
-The supplied development connection string already matches `docker-compose.yml`.
-
-### 6. Configure the web app
 
 macOS/Linux:
 
 ```bash
+cp apps/api/.env.example apps/api/.env
 cp apps/web/.env.example apps/web/.env
 ```
 
-Windows PowerShell:
-
-```powershell
-Copy-Item apps/web/.env.example apps/web/.env
-```
-
-### 7. Generate the database client and create tables
+Generate the Prisma client and create a fresh database schema:
 
 ```bash
 npm run db:generate
 npm run db:init
 ```
 
-### 8. Run frontend and backend
+Start the product:
 
 ```bash
 npm run dev
 ```
 
-Then open:
+Open:
 
-- web app: `http://localhost:5173`
-- API health check: `http://localhost:3001/health`
+```text
+http://localhost:5173
+```
 
-## Development login
+API health check:
 
-The current login screen is a simulator for the identity handoff. Enter a name and any fake development reference such as:
+```text
+http://localhost:3001/health
+```
+
+## Upgrading an earlier local AbbasiConnect database
+
+If you already ran the old three-table starter locally, pull the latest code and run:
+
+```bash
+git pull
+npm install
+npm run db:generate
+npm run db:upgrade
+npm run dev
+```
+
+Prisma will create/apply the local migration needed for the expanded schema.
+
+## Development onboarding
+
+The current UI starts with an Aadhaar-card shaped upload flow, but the development adapter is not a real Aadhaar OCR/authentication service.
+
+Use a test image and a fake verification reference such as:
 
 ```text
 DEV-ABBASI-001
 ```
 
-Do not enter a real Aadhaar number.
+Do not upload a real Aadhaar card or use a real Aadhaar number with the development endpoints.
 
-The backend turns that reference into a one-way internal identity hash and returns an application token. This lets the user, feed, post, follow, frontend, backend, and database flow work before a production Aadhaar provider is connected.
+The production boundary is documented in `docs/AADHAAR_INTEGRATION.md`.
 
-## Real Aadhaar integration
+## Testing moderation locally
 
-Treat Aadhaar as an identity-verification provider behind the backend, not as the database primary key and not as a field exposed to the frontend after verification.
+New accounts have the `MEMBER` role.
 
-Two production paths can be integrated later:
+To make a development account a moderator:
 
-1. Authorized online Aadhaar authentication through the applicable AUA/Sub-AUA ecosystem.
-2. Aadhaar Paperless Offline e-KYC, where the resident provides UIDAI-signed offline data and the app verifies it without collecting or storing the Aadhaar number.
+```bash
+npm run db:studio
+```
 
-After successful identity verification, AbbasiConnect should issue its own user ID and its own session. Normal return visits should use that application session or another low-friction sign-in mechanism rather than repeatedly collecting identity data.
+Open the `User` table, find your test account, change `role` from `MEMBER` to `MODERATOR`, save it, then log out and back in. A `Moderation` tab will appear in the web app.
 
-## API endpoints in the starter
+## Current API surface
 
 ```text
 GET    /health
+
+POST   /auth/dev-aadhaar/scan
 POST   /auth/dev-aadhaar
 GET    /auth/me
-GET    /feed
-POST   /posts
+
+PATCH  /users/me
+GET    /users/search
 GET    /users/:username
 POST   /users/:id/follow
 DELETE /users/:id/follow
+POST   /users/:id/block
+DELETE /users/:id/block
+
+GET    /feed
+POST   /posts
+GET    /posts/:id/replies
+POST   /posts/:id/replies
+POST   /posts/:id/like
+DELETE /posts/:id/like
+
+POST   /reports
+GET    /moderation/reports
+PATCH  /moderation/reports/:id
 ```
 
-## Documentation
+## What remains intentionally deferred
 
-- `ARCHITECTURE.md`
-- `docs/LOCAL_SETUP.md`
-- `docs/DATABASE.md`
-- `docs/AADHAAR_INTEGRATION.md`
-- `docs/PRODUCT_MVP.md`
-- `docs/DEPLOYMENT_NOTES.md`
+- production OCR/secure QR extraction
+- live Aadhaar verification/provider integration
+- notifications
+- public deployment
+- mobile clients
 
-## Next milestones
-
-1. Get this starter running locally.
-2. Replace development identity simulator with production identity adapter.
-3. Add username selection and onboarding.
-4. Add member search, replies, and likes.
-5. Add moderation, reporting, blocks, and mutes.
-6. Deploy API and PostgreSQL.
-7. Deploy web client.
-8. Build a mobile client against the same API.
+Those pieces can be added on top of the current social product without redesigning milestones 1 through 6.
