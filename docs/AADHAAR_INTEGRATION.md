@@ -1,58 +1,101 @@
-# Aadhaar integration boundary
+# Aadhaar onboarding and integration boundary
 
-The starter intentionally does not send real Aadhaar authentication requests. It provides a development simulator so product development can continue independently from production identity-provider onboarding.
+AbbasiConnect now models the intended onboarding UX while keeping real Aadhaar authentication behind a replaceable identity adapter.
 
-## Production design
+## Intended user flow
 
 ```text
-Browser or mobile app
-        |
-        v
-AbbasiConnect backend
-        |
-        v
-Identity adapter
-        |
-        +--> Authorized online Aadhaar integration
-        |
-        +--> or compliant Aadhaar Paperless Offline e-KYC verification
+1. User chooses/takes a photo of Aadhaar
+2. Identity adapter reads the card
+3. Extracted name is shown to the user
+4. User can edit the public display name
+5. User chooses an AbbasiConnect username
+6. Aadhaar identity is verified
+7. Backend receives a verified provider reference
+8. AbbasiConnect creates/finds the internal User
+9. AbbasiConnect issues its own session
+10. Card image is discarded
 ```
 
-After successful verification, the adapter should return an internal provider reference and the minimum verified attributes needed for account creation.
+The Aadhaar card itself is an onboarding input, not a profile photo and not a permanent social-media asset.
 
-AbbasiConnect then:
+## Development implementation
 
-1. converts the provider reference into an application-side one-way identity hash
-2. finds or creates the corresponding `User`
-3. issues an AbbasiConnect session/token
-4. uses the AbbasiConnect UUID for all normal application activity
+The web app includes the complete two-step onboarding screen:
 
-## Development
+- upload a test card image
+- review/edit the detected-name field
+- choose a username
+- provide a development verification reference
+- register the account
 
-The current `/auth/dev-aadhaar` endpoint accepts a fake development reference so the full flow can be tested without sending real identity data.
+`POST /auth/dev-aadhaar/scan` accepts the temporary test image as a data URL and returns simulated extraction output. The development adapter does not persist the uploaded image.
 
-Example:
+`POST /auth/dev-aadhaar` turns the development verification reference into a one-way identity hash and creates or retrieves the account.
 
-```json
-{
-  "displayName": "Test User",
-  "reference": "DEV-ABBASI-001"
-}
+Do not use a real Aadhaar card or real Aadhaar number with the development endpoints.
+
+## Production extraction
+
+The production adapter should not treat OCR text alone as proof that the Aadhaar document is authentic.
+
+A practical production pipeline is:
+
+```text
+card image / offline Aadhaar data
+        |
+        +--> OCR for user-facing field extraction
+        |
+        +--> Aadhaar QR or digitally signed offline e-KYC verification where available
+        |
+        +--> authorized online Aadhaar authentication when configured
+        |
+        v
+VerifiedIdentity
 ```
 
-Do not use real Aadhaar numbers with this endpoint.
+OCR can populate fields such as the person's name so the onboarding form feels instant. Verification should be performed through an Aadhaar verification mechanism rather than trusting the OCR output itself.
+
+## Data handling boundary
+
+The social database should contain only what AbbasiConnect needs after verification:
+
+- internal user UUID
+- one-way identity reference hash
+- optional last four digits/reference fragment when justified
+- public display name
+- username
+- bio
+- verification timestamp
+
+It should not use the raw Aadhaar number as the user ID.
+
+The normal target is also not to retain the uploaded Aadhaar card image after verification.
 
 ## Production adapter contract
 
-A future provider can be normalized to an internal result similar to:
+A real identity provider should normalize to something like:
 
 ```ts
 type VerifiedIdentity = {
   verified: true;
-  provider: "aadhaar-online" | "aadhaar-offline-ekyc";
+  provider: "aadhaar-online" | "aadhaar-offline-ekyc" | "aadhaar-secure-qr";
   identityReference: string;
-  displayName: string;
+  verifiedName: string;
+  aadhaarLast4?: string;
 };
 ```
 
-The rest of the social application does not need to change when the development provider is replaced.
+The backend then:
+
+1. hashes `identityReference`
+2. finds or creates the corresponding `User`
+3. records `verifiedAt`
+4. issues an AbbasiConnect session token
+5. deletes/discards temporary identity-upload material
+
+Everything after that point uses the AbbasiConnect UUID rather than Aadhaar credentials.
+
+## Return login
+
+Aadhaar verification is primarily the identity-establishment event. After registration, ordinary visits should use the AbbasiConnect session. A future login design can add device-bound sessions, passkeys, or another low-friction re-authentication path while preserving the verified identity established during onboarding.
