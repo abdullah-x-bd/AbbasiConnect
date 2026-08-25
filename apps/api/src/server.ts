@@ -1,56 +1,36 @@
-import Fastify from "fastify";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import jwt from "@fastify/jwt";
-import { PrismaClient } from "@prisma/client";
-import { createHash } from "node:crypto";
 import { z } from "zod";
+import { config } from "./config.js";
+import { prisma } from "./db.js";
+import { devIdentitySchema } from "./auth/dev.js";
+import { hashIdentityReference, makeUsername } from "./identity.js";
+import type { AuthTokenPayload } from "./types.js";
 
-const prisma = new PrismaClient();
 const app = Fastify({ logger: true });
 
-const PORT = Number(process.env.PORT ?? 3001);
-const WEB_ORIGIN = process.env.WEB_ORIGIN ?? "http://localhost:5173";
-const JWT_SECRET = process.env.JWT_SECRET ?? "dev-only-change-me";
-
 await app.register(cors, {
-  origin: WEB_ORIGIN,
+  origin: config.webOrigin,
 });
 
 await app.register(jwt, {
-  secret: JWT_SECRET,
+  secret: config.jwtSecret,
 });
-
-type TokenPayload = {
-  userId: string;
-};
 
 declare module "@fastify/jwt" {
   interface FastifyJWT {
-    payload: TokenPayload;
-    user: TokenPayload;
+    payload: AuthTokenPayload;
+    user: AuthTokenPayload;
   }
 }
 
-async function requireAuth(request: any, reply: any) {
+async function requireAuth(request: FastifyRequest, reply: FastifyReply) {
   try {
     await request.jwtVerify();
   } catch {
     return reply.code(401).send({ error: "Unauthorized" });
   }
-}
-
-function makeIdentityHash(reference: string) {
-  return createHash("sha256")
-    .update(`abbasiconnect:v1:${reference}`)
-    .digest("hex");
-}
-
-function makeUsername(displayName: string, identityHash: string) {
-  const base = displayName
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "")
-    .slice(0, 18) || "abbasi";
-  return `${base}${identityHash.slice(0, 6)}`;
 }
 
 app.get("/health", async () => ({
@@ -59,16 +39,13 @@ app.get("/health", async () => ({
 }));
 
 app.post("/auth/dev-aadhaar", async (request, reply) => {
-  const body = z.object({
-    displayName: z.string().trim().min(2).max(80),
-    reference: z.string().trim().min(4).max(100),
-  }).safeParse(request.body);
+  const body = devIdentitySchema.safeParse(request.body);
 
   if (!body.success) {
     return reply.code(400).send({ error: "Invalid login payload" });
   }
 
-  const identityRefHash = makeIdentityHash(body.data.reference);
+  const identityRefHash = hashIdentityReference(body.data.reference);
 
   let user = await prisma.user.findUnique({
     where: { identityRefHash },
@@ -97,7 +74,7 @@ app.post("/auth/dev-aadhaar", async (request, reply) => {
   };
 });
 
-app.get("/auth/me", { preHandler: requireAuth }, async (request: any, reply) => {
+app.get("/auth/me", { preHandler: requireAuth }, async (request, reply) => {
   const user = await prisma.user.findUnique({
     where: { id: request.user.userId },
     select: {
@@ -131,7 +108,7 @@ app.get("/feed", { preHandler: requireAuth }, async () => {
   return { posts };
 });
 
-app.post("/posts", { preHandler: requireAuth }, async (request: any, reply) => {
+app.post("/posts", { preHandler: requireAuth }, async (request, reply) => {
   const body = z.object({
     body: z.string().trim().min(1).max(1000),
   }).safeParse(request.body);
@@ -159,7 +136,7 @@ app.post("/posts", { preHandler: requireAuth }, async (request: any, reply) => {
   return reply.code(201).send(post);
 });
 
-app.get("/users/:username", { preHandler: requireAuth }, async (request: any, reply) => {
+app.get("/users/:username", { preHandler: requireAuth }, async (request, reply) => {
   const params = z.object({ username: z.string().min(1) }).safeParse(request.params);
   if (!params.success) return reply.code(400).send({ error: "Invalid username" });
 
@@ -188,7 +165,7 @@ app.get("/users/:username", { preHandler: requireAuth }, async (request: any, re
   return user;
 });
 
-app.post("/users/:id/follow", { preHandler: requireAuth }, async (request: any, reply) => {
+app.post("/users/:id/follow", { preHandler: requireAuth }, async (request, reply) => {
   const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
   if (!params.success) return reply.code(400).send({ error: "Invalid user id" });
 
@@ -216,7 +193,7 @@ app.post("/users/:id/follow", { preHandler: requireAuth }, async (request: any, 
   return { ok: true };
 });
 
-app.delete("/users/:id/follow", { preHandler: requireAuth }, async (request: any, reply) => {
+app.delete("/users/:id/follow", { preHandler: requireAuth }, async (request, reply) => {
   const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
   if (!params.success) return reply.code(400).send({ error: "Invalid user id" });
 
@@ -240,6 +217,6 @@ process.on("SIGINT", close);
 process.on("SIGTERM", close);
 
 await app.listen({
-  port: PORT,
+  port: config.port,
   host: "0.0.0.0",
 });
