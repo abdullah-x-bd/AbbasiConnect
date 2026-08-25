@@ -37,7 +37,7 @@ The repository ships with a development-only Aadhaar simulator. It does not ask 
 - `Post`
 - `Follow`
 
-The app stores an internal identity reference, not a raw Aadhaar number.
+The app stores an internal identity reference hash, not a raw Aadhaar number.
 
 ## Quick start
 
@@ -45,7 +45,7 @@ The app stores an internal identity reference, not a raw Aadhaar number.
 
 Install:
 
-- Node.js 20+
+- Node.js 22 LTS recommended, or another version supported by current Prisma and Vite
 - npm
 - Docker Desktop, for the easiest local PostgreSQL setup
 
@@ -78,26 +78,42 @@ This creates a local database with:
 
 ### 5. Configure the backend
 
+macOS/Linux:
+
 ```bash
 cp apps/api/.env.example apps/api/.env
 ```
 
+Windows PowerShell:
+
+```powershell
+Copy-Item apps/api/.env.example apps/api/.env
+```
+
 The supplied development connection string already matches `docker-compose.yml`.
 
-### 6. Create database tables
+### 6. Configure the web app
+
+macOS/Linux:
+
+```bash
+cp apps/web/.env.example apps/web/.env
+```
+
+Windows PowerShell:
+
+```powershell
+Copy-Item apps/web/.env.example apps/web/.env
+```
+
+### 7. Generate the database client and create tables
 
 ```bash
 npm run db:generate
-npm run db:migrate
+npm run db:init
 ```
 
-When Prisma asks for a migration name, use:
-
-```text
-init
-```
-
-### 7. Run frontend and backend
+### 8. Run frontend and backend
 
 ```bash
 npm run dev
@@ -118,7 +134,7 @@ DEV-ABBASI-001
 
 Do not enter a real Aadhaar number.
 
-The backend turns that reference into a one-way internal identity hash and returns an application token. This lets the complete user, feed, post, follow, frontend, backend, and database flow work before a production Aadhaar provider is connected.
+The backend turns that reference into a one-way internal identity hash and returns an application token. This lets the user, feed, post, follow, frontend, backend, and database flow work before a production Aadhaar provider is connected.
 
 ## Real Aadhaar integration
 
@@ -144,13 +160,22 @@ POST   /users/:id/follow
 DELETE /users/:id/follow
 ```
 
+## Documentation
+
+- `ARCHITECTURE.md`
+- `docs/LOCAL_SETUP.md`
+- `docs/DATABASE.md`
+- `docs/AADHAAR_INTEGRATION.md`
+- `docs/PRODUCT_MVP.md`
+- `docs/DEPLOYMENT_NOTES.md`
+
 ## Next milestones
 
 1. Get this starter running locally.
 2. Replace development identity simulator with production identity adapter.
 3. Add username selection and onboarding.
-4. Add replies and likes.
-5. Add moderation and reporting.
+4. Add member search, replies, and likes.
+5. Add moderation, reporting, blocks, and mutes.
 6. Deploy API and PostgreSQL.
 7. Deploy web client.
-8. Build React Native or native mobile clients against the same API.
+8. Build a mobile client against the same API.
