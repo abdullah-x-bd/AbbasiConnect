@@ -4,6 +4,7 @@ node_modules
 *.log
 .DS_Store
 apps/api/.env
+apps/api/src/generated/prisma
 apps/web/.env
 apps/web/dist
 coverage
