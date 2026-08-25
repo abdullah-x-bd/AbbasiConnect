@@ -7,31 +7,69 @@ datasource db {
   provider = "postgresql"
 }
 
+enum UserRole {
+  MEMBER
+  MODERATOR
+  ADMIN
+}
+
+enum ReportStatus {
+  OPEN
+  REVIEWED
+  ACTIONED
+  DISMISSED
+}
+
+enum ReportReason {
+  SPAM
+  HARASSMENT
+  IMPERSONATION
+  ABUSE
+  OTHER
+}
+
 model User {
-  id              String   @id @default(uuid())
-  identityRefHash String   @unique
+  id              String    @id @default(uuid())
+  identityRefHash String    @unique
+  identityLast4   String?
   displayName     String
-  username        String   @unique
-  bio             String   @default("")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  username        String    @unique
+  bio             String    @default("") @db.VarChar(280)
+  role            UserRole  @default(MEMBER)
+  verifiedAt      DateTime  @default(now())
+  suspendedAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   posts           Post[]
-  followers       Follow[] @relation("following")
-  following       Follow[] @relation("follower")
+  likes           Like[]
+  followers       Follow[]  @relation("following")
+  following       Follow[]  @relation("follower")
+  blocksMade      Block[]   @relation("blocker")
+  blocksReceived  Block[]   @relation("blocked")
+  reportsMade     Report[]  @relation("reporter")
+  reportsAgainst  Report[]  @relation("reportedUser")
+  reportsReviewed Report[]  @relation("reviewedBy")
 }
 
 model Post {
-  id        String   @id @default(uuid())
-  body      String   @db.VarChar(1000)
+  id        String    @id @default(uuid())
+  body      String    @db.VarChar(1000)
   authorId  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  parentId  String?
+  hiddenAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
-  author User @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  author  User    @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  parent  Post?   @relation("PostReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies Post[]  @relation("PostReplies")
+  likes   Like[]
+  reports Report[]
 
   @@index([createdAt])
   @@index([authorId, createdAt])
+  @@index([parentId, createdAt])
 }
 
 model Follow {
@@ -44,4 +82,52 @@ model Follow {
 
   @@id([followerId, followingId])
   @@index([followingId])
+}
+
+model Like {
+  userId    String
+  postId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@id([userId, postId])
+  @@index([postId])
+}
+
+model Block {
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+
+  blocker User @relation("blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@id([blockerId, blockedId])
+  @@index([blockedId])
+}
+
+model Report {
+  id             String       @id @default(uuid())
+  reporterId     String
+  reportedUserId String?
+  postId         String?
+  reason         ReportReason
+  details        String       @default("") @db.VarChar(1000)
+  status         ReportStatus @default(OPEN)
+  reviewedById   String?
+  moderationNote String       @default("") @db.VarChar(1000)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  reporter     User  @relation("reporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  reportedUser User? @relation("reportedUser", fields: [reportedUserId], references: [id], onDelete: SetNull)
+  post         Post? @relation(fields: [postId], references: [id], onDelete: SetNull)
+  reviewedBy   User? @relation("reviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([reporterId])
+  @@index([reportedUserId])
+  @@index([postId])
 }
