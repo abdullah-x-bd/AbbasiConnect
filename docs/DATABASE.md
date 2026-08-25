@@ -46,14 +46,20 @@ postgresql://USERNAME:PASSWORD@HOST:5432/DATABASE
 
 The file `apps/api/prisma/schema.prisma` is the source of truth for the starter data model.
 
-Run:
+For the first local database, run:
 
 ```bash
 npm run db:generate
-npm run db:migrate -- --name init
+npm run db:init
 ```
 
-Prisma creates the SQL migration and applies it to the database in `DATABASE_URL`.
+For later schema changes, edit `schema.prisma` and run:
+
+```bash
+npm run db:migrate
+```
+
+Prisma creates SQL migration files and applies them to the database in `DATABASE_URL`.
 
 ## Viewing rows
 
