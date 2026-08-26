@@ -1,0 +1,20 @@
+{
+  "name": "AbbasiConnect",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "forwardPorts": [5173, 3001],
+  "portsAttributes": {
+    "5173": {
+      "label": "AbbasiConnect web",
+      "onAutoForward": "openPreview"
+    },
+    "3001": {
+      "label": "AbbasiConnect API",
+      "onAutoForward": "silent"
+    }
+  },
+  "postCreateCommand": "npm install && cp apps/api/.env.example apps/api/.env && cp apps/web/.env.example apps/web/.env",
+  "remoteUser": "node"
+}
