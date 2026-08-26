@@ -29,8 +29,9 @@ type RegistrationTokenPayload = AuthTokenPayload & {
 };
 
 const usernameSchema = z.string().trim().toLowerCase().min(3).max(24).regex(/^[a-z0-9_]+$/);
-const reportReasonSchema = z.enum(["SPAM", "HARASSMENT", "IMPERSONATION", "ABUSE", "OTHER"]);
 const passwordSchema = z.string().min(8).max(72);
+const maritalStatusSchema = z.enum(["NEVER_MARRIED", "DIVORCED", "WIDOWED", "ANNULLED", "SEPARATED"]);
+const reportReasonSchema = z.enum(["SPAM", "HARASSMENT", "IMPERSONATION", "FALSE_INFORMATION", "INAPPROPRIATE", "OTHER"]);
 
 function normalizePhone(value?: string) {
   if (!value) return undefined;
@@ -58,34 +59,10 @@ function guessNameFromFile(fileName: string) {
   return base.replace(/\b\w/g, (letter) => letter.toUpperCase()).slice(0, 80);
 }
 
-function publicUser(user: {
-  id: string;
-  displayName: string;
-  username: string;
-  bio: string;
-  role: string;
-  verifiedAt: Date;
-  city?: string | null;
-  state?: string | null;
-  country?: string | null;
-}) {
-  return {
-    id: user.id,
-    displayName: user.displayName,
-    username: user.username,
-    bio: user.bio,
-    role: user.role,
-    verifiedAt: user.verifiedAt,
-    city: user.city ?? null,
-    state: user.state ?? null,
-    country: user.country ?? "India",
-  };
-}
-
 async function requireAuth(request: FastifyRequest, reply: FastifyReply) {
   try {
     await request.jwtVerify();
-    if (!request.user?.userId) return reply.code(401).send({ error: "Unauthorized" });
+    if (!request.user?.userId || request.user.userId === "__registration__") return reply.code(401).send({ error: "Unauthorized" });
     const member = await prisma.user.findUnique({ where: { id: request.user.userId }, select: { suspendedAt: true } });
     if (!member || member.suspendedAt) return reply.code(403).send({ error: "Account unavailable" });
   } catch {
@@ -109,47 +86,68 @@ async function blockedIdsFor(userId: string) {
 }
 
 async function areBlocked(a: string, b: string) {
-  const block = await prisma.block.findFirst({
+  return Boolean(await prisma.block.findFirst({
     where: { OR: [{ blockerId: a, blockedId: b }, { blockerId: b, blockedId: a }] },
     select: { blockerId: true },
+  }));
+}
+
+async function relationship(viewerId: string, targetId: string) {
+  const interest = await prisma.matchInterest.findFirst({
+    where: { OR: [{ senderId: viewerId, receiverId: targetId }, { senderId: targetId, receiverId: viewerId }] },
+    orderBy: { updatedAt: "desc" },
   });
-  return Boolean(block);
+  if (!interest) return { status: "NONE", direction: null, interestId: null };
+  return {
+    status: interest.status,
+    direction: interest.senderId === viewerId ? "OUTGOING" : "INCOMING",
+    interestId: interest.id,
+  };
 }
 
-const postSelect = (viewerId: string) => ({
-  id: true,
-  body: true,
-  createdAt: true,
-  author: { select: { id: true, displayName: true, username: true } },
-  likes: { where: { userId: viewerId }, select: { userId: true } },
-  _count: { select: { likes: true, replies: true } },
-} as const);
-
-function shapePost(post: {
-  id: string;
-  body: string;
-  createdAt: Date;
-  author: { id: string; displayName: string; username: string };
-  likes: { userId: string }[];
-  _count: { likes: number; replies: number };
-}) {
-  return { ...post, likedByMe: post.likes.length > 0, likes: undefined };
+function profileFields(user: any) {
+  return {
+    id: user.id,
+    displayName: user.displayName,
+    username: user.username,
+    age: ageFromDate(user.dateOfBirth),
+    gender: user.gender,
+    city: user.city,
+    state: user.state,
+    country: user.country,
+    heightCm: user.heightCm,
+    maritalStatus: user.maritalStatus,
+    education: user.education,
+    occupation: user.occupation,
+    profileCreatedBy: user.profileCreatedBy,
+    about: user.about,
+    familyDetails: user.familyDetails,
+    languages: user.languages,
+    interests: user.interests,
+    preferredMinAge: user.preferredMinAge,
+    preferredMaxAge: user.preferredMaxAge,
+    preferredMinHeightCm: user.preferredMinHeightCm,
+    preferredMaxHeightCm: user.preferredMaxHeightCm,
+    preferredLocations: user.preferredLocations,
+    preferredEducation: user.preferredEducation,
+    preferredOccupation: user.preferredOccupation,
+    partnerNotes: user.partnerNotes,
+    verifiedAt: user.verifiedAt,
+    isProfileActive: user.isProfileActive,
+  };
 }
 
-app.get("/health", async () => ({ ok: true, service: "abbasiconnect-api" }));
+app.get("/health", async () => ({ ok: true, service: "abbasiconnect-api", mode: "matrimonial" }));
 
 app.post("/auth/dev-aadhaar/scan", async (request, reply) => {
-  const body = z.object({
-    fileName: z.string().min(1).max(255),
-    imageDataUrl: z.string().startsWith("data:image/").max(8_000_000),
-  }).safeParse(request.body);
+  const body = z.object({ fileName: z.string().min(1).max(255), imageDataUrl: z.string().startsWith("data:image/").max(8_000_000) }).safeParse(request.body);
   if (!body.success) return reply.code(400).send({ error: "Upload a valid test image under 6 MB" });
   try {
     const scan = await scanAadhaarImage(body.data.imageDataUrl);
     return {
       mode: "development-ocr",
       extracted: { displayName: scan.displayName || guessNameFromFile(body.data.fileName), confidence: scan.confidence },
-      note: "The image is OCR-read in memory and is not written to the AbbasiConnect database.",
+      note: "The Aadhaar image is OCR-read in memory only and is never used as a matrimonial profile photo.",
     };
   } catch (error) {
     request.log.error(error);
@@ -158,17 +156,11 @@ app.post("/auth/dev-aadhaar/scan", async (request, reply) => {
 });
 
 app.post("/auth/dev-aadhaar/verify", async (request, reply) => {
-  const body = z.object({
-    identityName: z.string().trim().min(2).max(100),
-    reference: z.string().trim().min(4).max(100),
-    last4: z.string().regex(/^\d{4}$/).optional(),
-  }).safeParse(request.body);
+  const body = z.object({ identityName: z.string().trim().min(2).max(100), reference: z.string().trim().min(4).max(100), last4: z.string().regex(/^\d{4}$/).optional() }).safeParse(request.body);
   if (!body.success) return reply.code(400).send({ error: "Invalid identity verification payload" });
-
   const identityRefHash = hashIdentityReference(body.data.reference);
   const existing = await prisma.user.findUnique({ where: { identityRefHash }, select: { id: true } });
   if (existing) return reply.code(409).send({ error: "This Aadhaar-linked identity already has an account. Sign in instead." });
-
   const registrationToken = app.jwt.sign({
     userId: "__registration__",
     kind: "registration",
@@ -176,7 +168,6 @@ app.post("/auth/dev-aadhaar/verify", async (request, reply) => {
     identityName: body.data.identityName,
     identityLast4: body.data.last4,
   } satisfies RegistrationTokenPayload, { expiresIn: "15m" });
-
   return { verified: true, registrationToken, identityName: body.data.identityName, expiresInMinutes: 15 };
 });
 
@@ -189,20 +180,25 @@ app.post("/auth/register", async (request, reply) => {
     email: z.string().trim().max(254).optional(),
     phone: z.string().trim().max(30).optional(),
     dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    gender: z.string().trim().max(32).optional(),
+    gender: z.string().trim().min(1).max(32),
     city: z.string().trim().max(80).optional(),
     state: z.string().trim().max(80).optional(),
     country: z.string().trim().min(2).max(80).default("India"),
-    bio: z.string().trim().max(280).optional(),
+    heightCm: z.number().int().min(120).max(230).optional(),
+    maritalStatus: maritalStatusSchema,
+    education: z.string().trim().min(2).max(180),
+    occupation: z.string().trim().min(2).max(180),
+    profileCreatedBy: z.string().trim().min(2).max(32).default("SELF"),
+    about: z.string().trim().max(1500).optional(),
+    familyDetails: z.string().trim().max(1200).optional(),
+    languages: z.string().trim().max(300).optional(),
+    interests: z.string().trim().max(500).optional(),
   }).safeParse(request.body);
-  if (!body.success) return reply.code(400).send({ error: "Check the registration details and try again" });
+  if (!body.success) return reply.code(400).send({ error: "Check the registration and matrimonial profile details" });
 
   let registration: RegistrationTokenPayload;
-  try {
-    registration = app.jwt.verify<RegistrationTokenPayload>(body.data.registrationToken);
-  } catch {
-    return reply.code(401).send({ error: "Aadhaar verification has expired. Verify again." });
-  }
+  try { registration = app.jwt.verify<RegistrationTokenPayload>(body.data.registrationToken); }
+  catch { return reply.code(401).send({ error: "Aadhaar verification has expired. Verify again." }); }
   if (registration.kind !== "registration" || !registration.identityRefHash) return reply.code(401).send({ error: "Invalid registration proof" });
 
   const email = body.data.email?.toLowerCase() || undefined;
@@ -212,18 +208,11 @@ app.post("/auth/register", async (request, reply) => {
   if (phone && !/^\+?[1-9]\d{7,14}$/.test(phone)) return reply.code(400).send({ error: "Enter a valid contact number with country code" });
 
   const dateOfBirth = new Date(`${body.data.dateOfBirth}T00:00:00.000Z`);
-  const today = new Date();
-  if (Number.isNaN(dateOfBirth.getTime()) || dateOfBirth > today || dateOfBirth.getUTCFullYear() < 1900) return reply.code(400).send({ error: "Enter a valid date of birth" });
+  const age = ageFromDate(dateOfBirth);
+  if (Number.isNaN(dateOfBirth.getTime()) || !age || age < 18 || age > 100) return reply.code(400).send({ error: "Matrimonial profiles must be for adults aged 18 or older" });
 
   const conflicts = await prisma.user.findFirst({
-    where: {
-      OR: [
-        { identityRefHash: registration.identityRefHash },
-        { username: body.data.username },
-        ...(email ? [{ email }] : []),
-        ...(phone ? [{ phone }] : []),
-      ],
-    },
+    where: { OR: [{ identityRefHash: registration.identityRefHash }, { username: body.data.username }, ...(email ? [{ email }] : []), ...(phone ? [{ phone }] : [])] },
     select: { identityRefHash: true, username: true, email: true, phone: true },
   });
   if (conflicts) {
@@ -246,15 +235,23 @@ app.post("/auth/register", async (request, reply) => {
         email,
         phone,
         dateOfBirth,
-        gender: body.data.gender || null,
+        gender: body.data.gender,
         city: body.data.city || null,
         state: body.data.state || null,
         country: body.data.country,
-        bio: body.data.bio || "",
+        heightCm: body.data.heightCm,
+        maritalStatus: body.data.maritalStatus,
+        education: body.data.education,
+        occupation: body.data.occupation,
+        profileCreatedBy: body.data.profileCreatedBy,
+        about: body.data.about || "",
+        familyDetails: body.data.familyDetails || "",
+        languages: body.data.languages || "",
+        interests: body.data.interests || "",
       },
     });
     const token = app.jwt.sign({ userId: user.id }, { expiresIn: "30d" });
-    return reply.code(201).send({ token, user: publicUser(user) });
+    return reply.code(201).send({ token, user: profileFields(user) });
   } catch (error) {
     request.log.error(error);
     return reply.code(409).send({ error: "Account details conflict with an existing account" });
@@ -267,33 +264,49 @@ app.post("/auth/sign-in", async (request, reply) => {
   const user = await prisma.user.findUnique({ where: { username: body.data.username } });
   if (!user || !user.passwordHash) return reply.code(401).send({ error: "Incorrect username or password" });
   if (user.suspendedAt) return reply.code(403).send({ error: "Account unavailable" });
-  const valid = await bcrypt.compare(body.data.password, user.passwordHash);
-  if (!valid) return reply.code(401).send({ error: "Incorrect username or password" });
+  if (!await bcrypt.compare(body.data.password, user.passwordHash)) return reply.code(401).send({ error: "Incorrect username or password" });
   const token = app.jwt.sign({ userId: user.id }, { expiresIn: "30d" });
-  return { token, user: publicUser(user) };
+  return { token, user: profileFields(user) };
 });
 
 app.get("/auth/me", { preHandler: requireAuth }, async (request, reply) => {
-  const user = await prisma.user.findUnique({
-    where: { id: request.user.userId },
-    select: {
-      id: true, displayName: true, username: true, email: true, phone: true, dateOfBirth: true,
-      gender: true, city: true, state: true, country: true, bio: true, role: true, verifiedAt: true,
-      createdAt: true, _count: { select: { followers: true, following: true, posts: true } },
-    },
-  });
+  const user = await prisma.user.findUnique({ where: { id: request.user.userId } });
   if (!user) return reply.code(404).send({ error: "User not found" });
-  return { ...user, dateOfBirth: user.dateOfBirth?.toISOString().slice(0, 10) ?? null, age: ageFromDate(user.dateOfBirth) };
+  return { ...profileFields(user), email: user.email, phone: user.phone, dateOfBirth: user.dateOfBirth?.toISOString().slice(0, 10) ?? null, identityVerified: true, role: user.role };
 });
 
-app.patch("/users/me", { preHandler: requireAuth }, async (request, reply) => {
+app.patch("/profiles/me", { preHandler: requireAuth }, async (request, reply) => {
   const body = z.object({
-    displayName: z.string().trim().min(2).max(80), username: usernameSchema, bio: z.string().trim().max(280),
-    email: z.string().trim().max(254).optional(), phone: z.string().trim().max(30).optional(),
-    gender: z.string().trim().max(32).optional(), city: z.string().trim().max(80).optional(),
-    state: z.string().trim().max(80).optional(), country: z.string().trim().min(2).max(80).optional(),
+    displayName: z.string().trim().min(2).max(80),
+    username: usernameSchema,
+    email: z.string().trim().max(254).optional(),
+    phone: z.string().trim().max(30).optional(),
+    gender: z.string().trim().min(1).max(32),
+    city: z.string().trim().max(80).optional(),
+    state: z.string().trim().max(80).optional(),
+    country: z.string().trim().min(2).max(80),
+    heightCm: z.number().int().min(120).max(230).nullable().optional(),
+    maritalStatus: maritalStatusSchema,
+    education: z.string().trim().max(180),
+    occupation: z.string().trim().max(180),
+    profileCreatedBy: z.string().trim().min(2).max(32),
+    about: z.string().trim().max(1500),
+    familyDetails: z.string().trim().max(1200),
+    languages: z.string().trim().max(300),
+    interests: z.string().trim().max(500),
+    preferredMinAge: z.number().int().min(18).max(100).nullable().optional(),
+    preferredMaxAge: z.number().int().min(18).max(100).nullable().optional(),
+    preferredMinHeightCm: z.number().int().min(120).max(230).nullable().optional(),
+    preferredMaxHeightCm: z.number().int().min(120).max(230).nullable().optional(),
+    preferredLocations: z.string().trim().max(400),
+    preferredEducation: z.string().trim().max(300),
+    preferredOccupation: z.string().trim().max(300),
+    partnerNotes: z.string().trim().max(1200),
+    isProfileActive: z.boolean(),
   }).safeParse(request.body);
   if (!body.success) return reply.code(400).send({ error: "Invalid profile details" });
+  if (body.data.preferredMinAge && body.data.preferredMaxAge && body.data.preferredMinAge > body.data.preferredMaxAge) return reply.code(400).send({ error: "Minimum preferred age cannot exceed maximum preferred age" });
+  if (body.data.preferredMinHeightCm && body.data.preferredMaxHeightCm && body.data.preferredMinHeightCm > body.data.preferredMaxHeightCm) return reply.code(400).send({ error: "Minimum preferred height cannot exceed maximum preferred height" });
 
   const email = body.data.email?.toLowerCase() || undefined;
   const phone = normalizePhone(body.data.phone);
@@ -306,209 +319,207 @@ app.patch("/users/me", { preHandler: requireAuth }, async (request, reply) => {
     select: { username: true, email: true, phone: true },
   });
   if (taken?.username === body.data.username) return reply.code(409).send({ error: "That username is already taken" });
-  if (email && taken?.email === email) return reply.code(409).send({ error: "That email is already registered" });
+  if (email && taken?.email === email) return reply.code(409).send({ error: "That email address is already registered" });
   if (phone && taken?.phone === phone) return reply.code(409).send({ error: "That contact number is already registered" });
 
-  return prisma.user.update({
-    where: { id: request.user.userId },
-    data: {
-      displayName: body.data.displayName, username: body.data.username, bio: body.data.bio,
-      email: email ?? null, phone: phone ?? null, gender: body.data.gender || null,
-      city: body.data.city || null, state: body.data.state || null, country: body.data.country || "India",
-    },
-    select: {
-      id: true, displayName: true, username: true, email: true, phone: true, gender: true,
-      city: true, state: true, country: true, bio: true, role: true, verifiedAt: true, dateOfBirth: true,
-    },
-  });
+  const user = await prisma.user.update({ where: { id: request.user.userId }, data: { ...body.data, email, phone } });
+  return { ...profileFields(user), email: user.email, phone: user.phone, dateOfBirth: user.dateOfBirth?.toISOString().slice(0, 10) ?? null, identityVerified: true, role: user.role };
 });
 
-app.get("/users/search", { preHandler: requireAuth }, async (request, reply) => {
-  const query = z.object({ q: z.string().trim().min(1).max(80) }).safeParse(request.query);
-  if (!query.success) return reply.code(400).send({ error: "Enter a search term" });
+app.get("/profiles/browse", { preHandler: requireAuth }, async (request, reply) => {
+  const query = z.object({
+    q: z.string().trim().max(80).optional(),
+    gender: z.string().trim().max(32).optional(),
+    city: z.string().trim().max(80).optional(),
+    maritalStatus: maritalStatusSchema.optional(),
+    minAge: z.coerce.number().int().min(18).max(100).optional(),
+    maxAge: z.coerce.number().int().min(18).max(100).optional(),
+    minHeight: z.coerce.number().int().min(120).max(230).optional(),
+    maxHeight: z.coerce.number().int().min(120).max(230).optional(),
+  }).safeParse(request.query);
+  if (!query.success) return reply.code(400).send({ error: "Invalid browse filters" });
+
   const blocked = await blockedIdsFor(request.user.userId);
+  const q = query.data.q;
   const users = await prisma.user.findMany({
     where: {
-      id: { notIn: [request.user.userId, ...blocked] }, suspendedAt: null,
-      OR: [{ displayName: { contains: query.data.q, mode: "insensitive" } }, { username: { contains: query.data.q.toLowerCase(), mode: "insensitive" } }],
+      id: { notIn: [request.user.userId, ...blocked] },
+      suspendedAt: null,
+      isProfileActive: true,
+      ...(query.data.gender ? { gender: { equals: query.data.gender, mode: "insensitive" } } : {}),
+      ...(query.data.city ? { city: { contains: query.data.city, mode: "insensitive" } } : {}),
+      ...(query.data.maritalStatus ? { maritalStatus: query.data.maritalStatus } : {}),
+      ...(q ? { OR: [
+        { displayName: { contains: q, mode: "insensitive" } },
+        { username: { contains: q.toLowerCase(), mode: "insensitive" } },
+        { city: { contains: q, mode: "insensitive" } },
+        { education: { contains: q, mode: "insensitive" } },
+        { occupation: { contains: q, mode: "insensitive" } },
+      ] } : {}),
     },
-    take: 30, orderBy: { displayName: "asc" },
-    select: {
-      id: true, displayName: true, username: true, bio: true, city: true, state: true, country: true, verifiedAt: true,
-      followers: { where: { followerId: request.user.userId }, select: { followerId: true } },
-      _count: { select: { followers: true, following: true } },
-    },
+    orderBy: { updatedAt: "desc" },
+    take: 100,
   });
-  return { users: users.map((user) => ({ ...user, isFollowing: user.followers.length > 0, followers: undefined })) };
+
+  const filtered = users.filter((user) => {
+    const age = ageFromDate(user.dateOfBirth);
+    if (query.data.minAge && (!age || age < query.data.minAge)) return false;
+    if (query.data.maxAge && (!age || age > query.data.maxAge)) return false;
+    if (query.data.minHeight && (!user.heightCm || user.heightCm < query.data.minHeight)) return false;
+    if (query.data.maxHeight && (!user.heightCm || user.heightCm > query.data.maxHeight)) return false;
+    return true;
+  });
+
+  const ids = filtered.map((user) => user.id);
+  const [relations, shortlists] = await Promise.all([
+    prisma.matchInterest.findMany({ where: { OR: [{ senderId: request.user.userId, receiverId: { in: ids } }, { receiverId: request.user.userId, senderId: { in: ids } }] } }),
+    prisma.shortlist.findMany({ where: { userId: request.user.userId, targetId: { in: ids } } }),
+  ]);
+
+  return { profiles: filtered.map((user) => {
+    const relation = relations.find((item) => item.senderId === user.id || item.receiverId === user.id);
+    return {
+      ...profileFields(user),
+      relationship: relation ? { status: relation.status, direction: relation.senderId === request.user.userId ? "OUTGOING" : "INCOMING", interestId: relation.id } : { status: "NONE", direction: null, interestId: null },
+      shortlisted: shortlists.some((item) => item.targetId === user.id),
+    };
+  }) };
 });
 
-app.get("/users/:username", { preHandler: requireAuth }, async (request, reply) => {
-  const params = z.object({ username: z.string().min(1) }).safeParse(request.params);
+app.get("/profiles/:username", { preHandler: requireAuth }, async (request, reply) => {
+  const params = z.object({ username: z.string().min(1).max(24) }).safeParse(request.params);
   if (!params.success) return reply.code(400).send({ error: "Invalid username" });
-  const user = await prisma.user.findUnique({
-    where: { username: params.data.username.toLowerCase() },
-    select: {
-      id: true, displayName: true, username: true, bio: true, city: true, state: true, country: true,
-      verifiedAt: true, suspendedAt: true,
-      followers: { where: { followerId: request.user.userId }, select: { followerId: true } },
-      posts: { where: { parentId: null, hiddenAt: null }, orderBy: { createdAt: "desc" }, take: 50, select: postSelect(request.user.userId) },
-      _count: { select: { followers: true, following: true } },
-    },
-  });
-  if (!user || user.suspendedAt) return reply.code(404).send({ error: "User not found" });
-  if (user.id !== request.user.userId && await areBlocked(user.id, request.user.userId)) return reply.code(404).send({ error: "User not found" });
-  return { ...user, suspendedAt: undefined, isFollowing: user.followers.length > 0, followers: undefined, posts: user.posts.map(shapePost) };
+  const user = await prisma.user.findUnique({ where: { username: params.data.username.toLowerCase() } });
+  if (!user || user.suspendedAt || (!user.isProfileActive && user.id !== request.user.userId)) return reply.code(404).send({ error: "Profile not found" });
+  if (user.id !== request.user.userId && await areBlocked(user.id, request.user.userId)) return reply.code(404).send({ error: "Profile not found" });
+
+  const relation = user.id === request.user.userId ? { status: "SELF", direction: null, interestId: null } : await relationship(request.user.userId, user.id);
+  const shortlisted = user.id === request.user.userId ? false : Boolean(await prisma.shortlist.findUnique({ where: { userId_targetId: { userId: request.user.userId, targetId: user.id } } }));
+  const canSeeContact = user.id === request.user.userId || relation.status === "ACCEPTED";
+  return { ...profileFields(user), relationship: relation, shortlisted, contact: canSeeContact ? { email: user.email, phone: user.phone } : null };
 });
 
-app.post("/users/:id/follow", { preHandler: requireAuth }, async (request, reply) => {
+app.post("/profiles/:id/interest", { preHandler: requireAuth }, async (request, reply) => {
   const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-  if (!params.success) return reply.code(400).send({ error: "Invalid user id" });
-  if (params.data.id === request.user.userId) return reply.code(400).send({ error: "You cannot follow yourself" });
-  if (await areBlocked(params.data.id, request.user.userId)) return reply.code(404).send({ error: "User not found" });
-  const target = await prisma.user.findUnique({ where: { id: params.data.id }, select: { suspendedAt: true } });
-  if (!target || target.suspendedAt) return reply.code(404).send({ error: "User not found" });
-  await prisma.follow.upsert({
-    where: { followerId_followingId: { followerId: request.user.userId, followingId: params.data.id } },
-    create: { followerId: request.user.userId, followingId: params.data.id }, update: {},
+  const body = z.object({ message: z.string().trim().max(500).optional() }).safeParse(request.body ?? {});
+  if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid interest request" });
+  if (params.data.id === request.user.userId) return reply.code(400).send({ error: "You cannot send interest to yourself" });
+  if (await areBlocked(request.user.userId, params.data.id)) return reply.code(404).send({ error: "Profile not found" });
+
+  const target = await prisma.user.findUnique({ where: { id: params.data.id }, select: { id: true, suspendedAt: true, isProfileActive: true } });
+  if (!target || target.suspendedAt || !target.isProfileActive) return reply.code(404).send({ error: "Profile not found" });
+
+  const reverse = await prisma.matchInterest.findUnique({ where: { senderId_receiverId: { senderId: params.data.id, receiverId: request.user.userId } } });
+  if (reverse?.status === "PENDING") {
+    const accepted = await prisma.matchInterest.update({ where: { id: reverse.id }, data: { status: "ACCEPTED" } });
+    return { matched: true, interest: accepted };
+  }
+  if (reverse?.status === "ACCEPTED") return { matched: true, interest: reverse };
+
+  const existing = await prisma.matchInterest.findUnique({ where: { senderId_receiverId: { senderId: request.user.userId, receiverId: params.data.id } } });
+  if (existing?.status === "ACCEPTED") return { matched: true, interest: existing };
+  const interest = await prisma.matchInterest.upsert({
+    where: { senderId_receiverId: { senderId: request.user.userId, receiverId: params.data.id } },
+    create: { senderId: request.user.userId, receiverId: params.data.id, message: body.data.message || "" },
+    update: { status: "PENDING", message: body.data.message || "" },
   });
+  return reply.code(201).send({ matched: false, interest });
+});
+
+app.patch("/interests/:id", { preHandler: requireAuth }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  const body = z.object({ action: z.enum(["ACCEPT", "DECLINE", "WITHDRAW"]) }).safeParse(request.body);
+  if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid interest action" });
+  const interest = await prisma.matchInterest.findUnique({ where: { id: params.data.id } });
+  if (!interest) return reply.code(404).send({ error: "Interest not found" });
+  if (body.data.action === "WITHDRAW") {
+    if (interest.senderId !== request.user.userId) return reply.code(403).send({ error: "Only the sender can withdraw this interest" });
+    return prisma.matchInterest.update({ where: { id: interest.id }, data: { status: "WITHDRAWN" } });
+  }
+  if (interest.receiverId !== request.user.userId) return reply.code(403).send({ error: "Only the recipient can respond to this interest" });
+  return prisma.matchInterest.update({ where: { id: interest.id }, data: { status: body.data.action === "ACCEPT" ? "ACCEPTED" : "DECLINED" } });
+});
+
+app.get("/interests", { preHandler: requireAuth }, async (request) => {
+  const [received, sent] = await Promise.all([
+    prisma.matchInterest.findMany({ where: { receiverId: request.user.userId, status: { not: "WITHDRAWN" } }, orderBy: { updatedAt: "desc" }, include: { sender: true } }),
+    prisma.matchInterest.findMany({ where: { senderId: request.user.userId, status: { not: "WITHDRAWN" } }, orderBy: { updatedAt: "desc" }, include: { receiver: true } }),
+  ]);
+  return {
+    received: received.map((item) => ({ id: item.id, status: item.status, message: item.message, createdAt: item.createdAt, profile: profileFields(item.sender), contact: item.status === "ACCEPTED" ? { email: item.sender.email, phone: item.sender.phone } : null })),
+    sent: sent.map((item) => ({ id: item.id, status: item.status, message: item.message, createdAt: item.createdAt, profile: profileFields(item.receiver), contact: item.status === "ACCEPTED" ? { email: item.receiver.email, phone: item.receiver.phone } : null })),
+  };
+});
+
+app.post("/profiles/:id/shortlist", { preHandler: requireAuth }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: "Invalid profile id" });
+  if (params.data.id === request.user.userId) return reply.code(400).send({ error: "You cannot shortlist yourself" });
+  if (await areBlocked(request.user.userId, params.data.id)) return reply.code(404).send({ error: "Profile not found" });
+  const target = await prisma.user.findUnique({ where: { id: params.data.id }, select: { id: true } });
+  if (!target) return reply.code(404).send({ error: "Profile not found" });
+  await prisma.shortlist.upsert({ where: { userId_targetId: { userId: request.user.userId, targetId: params.data.id } }, create: { userId: request.user.userId, targetId: params.data.id }, update: {} });
   return { ok: true };
 });
 
-app.delete("/users/:id/follow", { preHandler: requireAuth }, async (request, reply) => {
+app.delete("/profiles/:id/shortlist", { preHandler: requireAuth }, async (request, reply) => {
   const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-  if (!params.success) return reply.code(400).send({ error: "Invalid user id" });
-  await prisma.follow.deleteMany({ where: { followerId: request.user.userId, followingId: params.data.id } });
+  if (!params.success) return reply.code(400).send({ error: "Invalid profile id" });
+  await prisma.shortlist.deleteMany({ where: { userId: request.user.userId, targetId: params.data.id } });
   return { ok: true };
 });
 
-app.post("/users/:id/block", { preHandler: requireAuth }, async (request, reply) => {
+app.get("/shortlist", { preHandler: requireAuth }, async (request) => {
+  const blocked = await blockedIdsFor(request.user.userId);
+  const items = await prisma.shortlist.findMany({ where: { userId: request.user.userId, targetId: { notIn: blocked }, target: { suspendedAt: null, isProfileActive: true } }, orderBy: { createdAt: "desc" }, include: { target: true } });
+  const profiles = [];
+  for (const item of items) profiles.push({ ...profileFields(item.target), relationship: await relationship(request.user.userId, item.targetId), shortlisted: true });
+  return { profiles };
+});
+
+app.post("/profiles/:id/block", { preHandler: requireAuth }, async (request, reply) => {
   const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-  if (!params.success) return reply.code(400).send({ error: "Invalid user id" });
-  if (params.data.id === request.user.userId) return reply.code(400).send({ error: "You cannot block yourself" });
+  if (!params.success || params.data.id === request.user.userId) return reply.code(400).send({ error: "Invalid profile" });
   await prisma.$transaction([
-    prisma.block.upsert({
-      where: { blockerId_blockedId: { blockerId: request.user.userId, blockedId: params.data.id } },
-      create: { blockerId: request.user.userId, blockedId: params.data.id }, update: {},
-    }),
-    prisma.follow.deleteMany({ where: { OR: [{ followerId: request.user.userId, followingId: params.data.id }, { followerId: params.data.id, followingId: request.user.userId }] } }),
+    prisma.block.upsert({ where: { blockerId_blockedId: { blockerId: request.user.userId, blockedId: params.data.id } }, create: { blockerId: request.user.userId, blockedId: params.data.id }, update: {} }),
+    prisma.matchInterest.deleteMany({ where: { OR: [{ senderId: request.user.userId, receiverId: params.data.id }, { senderId: params.data.id, receiverId: request.user.userId }] } }),
+    prisma.shortlist.deleteMany({ where: { OR: [{ userId: request.user.userId, targetId: params.data.id }, { userId: params.data.id, targetId: request.user.userId }] } }),
   ]);
   return { ok: true };
 });
 
-app.delete("/users/:id/block", { preHandler: requireAuth }, async (request, reply) => {
+app.delete("/profiles/:id/block", { preHandler: requireAuth }, async (request, reply) => {
   const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-  if (!params.success) return reply.code(400).send({ error: "Invalid user id" });
+  if (!params.success) return reply.code(400).send({ error: "Invalid profile" });
   await prisma.block.deleteMany({ where: { blockerId: request.user.userId, blockedId: params.data.id } });
   return { ok: true };
 });
 
-app.get("/feed", { preHandler: requireAuth }, async (request) => {
-  const blocked = await blockedIdsFor(request.user.userId);
-  const posts = await prisma.post.findMany({
-    where: { parentId: null, hiddenAt: null, authorId: { notIn: blocked }, author: { suspendedAt: null } },
-    orderBy: { createdAt: "desc" }, take: 100, select: postSelect(request.user.userId),
-  });
-  return { posts: posts.map(shapePost) };
-});
-
-app.post("/posts", { preHandler: requireAuth }, async (request, reply) => {
-  const body = z.object({ body: z.string().trim().min(1).max(1000) }).safeParse(request.body);
-  if (!body.success) return reply.code(400).send({ error: "Post must be between 1 and 1000 characters" });
-  const post = await prisma.post.create({ data: { body: body.data.body, authorId: request.user.userId }, select: postSelect(request.user.userId) });
-  return reply.code(201).send(shapePost(post));
-});
-
-app.get("/posts/:id/replies", { preHandler: requireAuth }, async (request, reply) => {
-  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-  if (!params.success) return reply.code(400).send({ error: "Invalid post id" });
-  const blocked = await blockedIdsFor(request.user.userId);
-  const replies = await prisma.post.findMany({
-    where: { parentId: params.data.id, hiddenAt: null, authorId: { notIn: blocked }, author: { suspendedAt: null } },
-    orderBy: { createdAt: "asc" }, select: postSelect(request.user.userId),
-  });
-  return { replies: replies.map(shapePost) };
-});
-
-app.post("/posts/:id/replies", { preHandler: requireAuth }, async (request, reply) => {
-  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-  const body = z.object({ body: z.string().trim().min(1).max(1000) }).safeParse(request.body);
-  if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid reply" });
-  const parent = await prisma.post.findUnique({ where: { id: params.data.id }, select: { authorId: true, hiddenAt: true } });
-  if (!parent || parent.hiddenAt) return reply.code(404).send({ error: "Post not found" });
-  if (await areBlocked(parent.authorId, request.user.userId)) return reply.code(404).send({ error: "Post not found" });
-  const post = await prisma.post.create({ data: { body: body.data.body, authorId: request.user.userId, parentId: params.data.id }, select: postSelect(request.user.userId) });
-  return reply.code(201).send(shapePost(post));
-});
-
-app.post("/posts/:id/like", { preHandler: requireAuth }, async (request, reply) => {
-  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-  if (!params.success) return reply.code(400).send({ error: "Invalid post id" });
-  const post = await prisma.post.findUnique({ where: { id: params.data.id }, select: { authorId: true, hiddenAt: true } });
-  if (!post || post.hiddenAt || await areBlocked(post.authorId, request.user.userId)) return reply.code(404).send({ error: "Post not found" });
-  await prisma.like.upsert({ where: { userId_postId: { userId: request.user.userId, postId: params.data.id } }, create: { userId: request.user.userId, postId: params.data.id }, update: {} });
-  return { ok: true };
-});
-
-app.delete("/posts/:id/like", { preHandler: requireAuth }, async (request, reply) => {
-  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-  if (!params.success) return reply.code(400).send({ error: "Invalid post id" });
-  await prisma.like.deleteMany({ where: { userId: request.user.userId, postId: params.data.id } });
-  return { ok: true };
-});
-
 app.post("/reports", { preHandler: requireAuth }, async (request, reply) => {
-  const body = z.object({
-    reportedUserId: z.string().uuid().optional(), postId: z.string().uuid().optional(), reason: reportReasonSchema,
-    details: z.string().trim().max(1000).default(""),
-  }).refine((value) => Boolean(value.reportedUserId || value.postId), { message: "Report a member or post" }).safeParse(request.body);
+  const body = z.object({ reportedUserId: z.string().uuid(), reason: reportReasonSchema, details: z.string().trim().max(1000).optional() }).safeParse(request.body);
   if (!body.success) return reply.code(400).send({ error: "Invalid report" });
-  let reportedUserId = body.data.reportedUserId;
-  if (body.data.postId && !reportedUserId) {
-    const post = await prisma.post.findUnique({ where: { id: body.data.postId }, select: { authorId: true } });
-    if (!post) return reply.code(404).send({ error: "Post not found" });
-    reportedUserId = post.authorId;
-  }
-  const report = await prisma.report.create({
-    data: { reporterId: request.user.userId, reportedUserId, postId: body.data.postId, reason: body.data.reason, details: body.data.details },
-    select: { id: true, status: true, createdAt: true },
-  });
+  if (body.data.reportedUserId === request.user.userId) return reply.code(400).send({ error: "You cannot report yourself" });
+  const target = await prisma.user.findUnique({ where: { id: body.data.reportedUserId }, select: { id: true } });
+  if (!target) return reply.code(404).send({ error: "Profile not found" });
+  const report = await prisma.report.create({ data: { reporterId: request.user.userId, reportedUserId: body.data.reportedUserId, reason: body.data.reason, details: body.data.details || "" } });
   return reply.code(201).send(report);
 });
 
 app.get("/moderation/reports", { preHandler: requireModerator }, async () => {
-  const reports = await prisma.report.findMany({
-    orderBy: { createdAt: "desc" }, take: 100,
-    include: {
-      reporter: { select: { id: true, displayName: true, username: true } },
-      reportedUser: { select: { id: true, displayName: true, username: true, suspendedAt: true } },
-      post: { select: { id: true, body: true, hiddenAt: true } },
-      reviewedBy: { select: { id: true, displayName: true, username: true } },
-    },
-  });
+  const reports = await prisma.report.findMany({ orderBy: { createdAt: "desc" }, take: 200, include: { reporter: { select: { id: true, displayName: true, username: true } }, reportedUser: { select: { id: true, displayName: true, username: true, suspendedAt: true } } } });
   return { reports };
 });
 
 app.patch("/moderation/reports/:id", { preHandler: requireModerator }, async (request, reply) => {
   const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-  const body = z.object({ action: z.enum(["REVIEW", "DISMISS", "HIDE_POST", "RESTORE_POST", "SUSPEND_USER", "RESTORE_USER"]), note: z.string().trim().max(1000).optional() }).safeParse(request.body);
+  const body = z.object({ action: z.enum(["REVIEW", "DISMISS", "SUSPEND_USER", "RESTORE_USER"]), note: z.string().trim().max(1000).optional() }).safeParse(request.body);
   if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid moderation action" });
   const report = await prisma.report.findUnique({ where: { id: params.data.id } });
   if (!report) return reply.code(404).send({ error: "Report not found" });
-
-  if (body.data.action === "HIDE_POST" || body.data.action === "RESTORE_POST") {
-    if (!report.postId) return reply.code(400).send({ error: "This report has no post" });
-    await prisma.post.update({ where: { id: report.postId }, data: { hiddenAt: body.data.action === "HIDE_POST" ? new Date() : null } });
-  }
-  if (body.data.action === "SUSPEND_USER" || body.data.action === "RESTORE_USER") {
-    if (!report.reportedUserId) return reply.code(400).send({ error: "This report has no member" });
-    await prisma.user.update({ where: { id: report.reportedUserId }, data: { suspendedAt: body.data.action === "SUSPEND_USER" ? new Date() : null } });
-  }
-
+  if (body.data.action === "SUSPEND_USER") await prisma.user.update({ where: { id: report.reportedUserId }, data: { suspendedAt: new Date() } });
+  if (body.data.action === "RESTORE_USER") await prisma.user.update({ where: { id: report.reportedUserId }, data: { suspendedAt: null } });
   const status = body.data.action === "DISMISS" ? "DISMISSED" : body.data.action === "REVIEW" ? "REVIEWED" : "ACTIONED";
-  return prisma.report.update({
-    where: { id: params.data.id },
-    data: { status, reviewedById: request.user.userId, moderationNote: body.data.note || report.moderationNote },
-  });
+  return prisma.report.update({ where: { id: report.id }, data: { status, reviewedById: request.user.userId, moderationNote: body.data.note || "" } });
 });
 
 const close = async () => {
