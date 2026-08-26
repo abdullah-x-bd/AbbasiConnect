@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import AdminDashboard from "./AdminDashboard";
 import "./styles.css";
+import "./admin.css";
 
 const TOKEN_KEY = "abbasiconnect_token";
 const MODE_KEY = "abbasiconnect_session_mode";
