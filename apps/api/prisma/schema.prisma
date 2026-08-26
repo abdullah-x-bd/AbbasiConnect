@@ -32,8 +32,17 @@ model User {
   id              String    @id @default(uuid())
   identityRefHash String    @unique
   identityLast4   String?
-  displayName     String
-  username        String    @unique
+  identityName    String?   @db.VarChar(100)
+  displayName     String    @db.VarChar(80)
+  username        String    @unique @db.VarChar(24)
+  passwordHash    String
+  email           String?   @unique @db.VarChar(254)
+  phone           String?   @unique @db.VarChar(20)
+  dateOfBirth     DateTime?
+  gender          String?   @db.VarChar(32)
+  city            String?   @db.VarChar(80)
+  state           String?   @db.VarChar(80)
+  country         String    @default("India") @db.VarChar(80)
   bio             String    @default("") @db.VarChar(280)
   role            UserRole  @default(MEMBER)
   verifiedAt      DateTime  @default(now())
