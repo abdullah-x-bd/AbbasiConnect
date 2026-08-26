@@ -4,16 +4,64 @@ AbbasiConnect is a minimal, text-only social platform built around verified huma
 
 The product deliberately has no social profile photos, video, stories, reels, or media feed. Aadhaar card imagery is treated only as temporary identity-onboarding input.
 
+## Account model
+
+The product now has two completely separate entry paths.
+
+### Register
+
+```text
+Register
+  -> upload Aadhaar card image
+  -> OCR reads the name
+  -> Aadhaar verification adapter verifies the identity
+  -> short-lived registration proof
+  -> account details page
+  -> create account
+```
+
+The account-details page collects:
+
+- name
+- username
+- password and password confirmation
+- email and/or contact number, with at least one required
+- date of birth, with age calculated from DOB
+- optional gender
+- optional city and state
+- country
+- optional short bio
+
+Passwords are stored only as bcrypt hashes.
+
+The verified identity is linked one-to-one to the account through the unique `identityRefHash` field. The Aadhaar card image is not stored in the social database and the identity reference is not exposed on public profiles.
+
+### Sign in
+
+Returning users do not repeat Aadhaar onboarding.
+
+```text
+Sign in
+  -> username
+  -> password
+  -> AbbasiConnect session
+```
+
 ## Implemented product scope
 
-### 1. Identity onboarding
+### 1. Identity and account onboarding
 
+- landing screen with `Register` and `Sign in`
 - Aadhaar-card photo upload flow
 - backend OCR using Tesseract.js
 - likely English name extraction from OCR text
-- extracted-name confirmation/editing screen
-- username selection
-- development identity-verification reference mapped to an internal user UUID
+- development Aadhaar verification adapter
+- short-lived registration proof after identity verification
+- account-details page after Aadhaar verification
+- one verified identity mapped to one account
+- username/password authentication for returning users
+- bcrypt password hashing
+- private email/contact/DOB account fields
 - no permanent Aadhaar-card image field in the social database
 
 The OCR piece is implemented. Live UIDAI Aadhaar authentication is still represented by the development verification reference and remains behind the replaceable identity adapter.
@@ -30,6 +78,8 @@ The OCR piece is implemented. Live UIDAI Aadhaar authentication is still represe
 - editable display name
 - editable username
 - short bio
+- optional location
+- private account details page for the signed-in user
 - follower/following counts
 - follow/unfollow
 - member post history
@@ -76,6 +126,22 @@ Browser -> API -> PostgreSQL
 The backend remains the canonical application layer so later clients can use the same API without changing the social data model.
 
 ## Data model
+
+The `User` model now includes account credentials/profile fields in addition to the social graph:
+
+- unique internal Aadhaar-linked identity reference hash
+- optional last four digits for development display/support use
+- identity-derived name
+- display name
+- username
+- password hash
+- email
+- phone
+- date of birth
+- optional gender/location
+- role and moderation state
+
+Social models:
 
 - `User`
 - `Post`
@@ -144,7 +210,7 @@ The first OCR operation may need to obtain Tesseract's English recognition data.
 
 ## Upgrading an earlier local AbbasiConnect database
 
-If you already ran the old three-table starter locally, pull the latest code and run:
+If you already ran an earlier starter locally:
 
 ```bash
 git pull
@@ -154,19 +220,21 @@ npm run db:upgrade
 npm run dev
 ```
 
-Prisma will create/apply the local migration needed for the expanded schema.
+The new credential fields are migration-compatible with old development rows. Old accounts created before password authentication have no usable password and should be replaced with fresh development accounts through the new Register flow.
 
-## Development onboarding
+## Development registration
 
-Use a test Aadhaar-like image for local development. The OCR engine will attempt to read it and identify the likely name. You can edit the detected name before registration.
+Use a test Aadhaar-like image for local development. OCR will attempt to read the name.
 
-For the verification stage use a fake reference such as:
+For the development verification stage use a fake unique reference such as:
 
 ```text
 DEV-ABBASI-001
 ```
 
-The fake reference stands in for the unique reference that a production Aadhaar verification adapter would return after successful verification.
+That fake reference stands in for the unique reference returned by a future production Aadhaar authentication adapter. Once used to create an account, the same reference cannot create another account.
+
+After verification, complete the account form and choose a password. On later visits use `Sign in` with the username and password only.
 
 The production boundary is documented in `docs/AADHAAR_INTEGRATION.md`.
 
@@ -174,13 +242,11 @@ The production boundary is documented in `docs/AADHAAR_INTEGRATION.md`.
 
 New accounts have the `MEMBER` role.
 
-To make a development account a moderator:
-
 ```bash
 npm run db:studio
 ```
 
-Open the `User` table, find your test account, change `role` from `MEMBER` to `MODERATOR`, save it, then log out and back in. A `Moderation` tab will appear in the web app.
+Open the `User` table, find your test account, change `role` from `MEMBER` to `MODERATOR`, save it, then sign out and sign in again. A `Moderation` tab will appear.
 
 ## Current API surface
 
@@ -188,7 +254,9 @@ Open the `User` table, find your test account, change `role` from `MEMBER` to `M
 GET    /health
 
 POST   /auth/dev-aadhaar/scan
-POST   /auth/dev-aadhaar
+POST   /auth/dev-aadhaar/verify
+POST   /auth/register
+POST   /auth/sign-in
 GET    /auth/me
 
 PATCH  /users/me
@@ -215,8 +283,7 @@ PATCH  /moderation/reports/:id
 
 - verified Aadhaar QR/offline e-KYC parsing
 - live UIDAI/Aadhaar authentication provider integration
+- email/contact OTP verification and account recovery
 - notifications
 - public deployment
 - mobile clients
-
-Those pieces can be added on top of the current social product without redesigning milestones 1 through 6.
