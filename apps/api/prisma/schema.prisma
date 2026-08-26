@@ -13,6 +13,21 @@ enum UserRole {
   ADMIN
 }
 
+enum MaritalStatus {
+  NEVER_MARRIED
+  DIVORCED
+  WIDOWED
+  ANNULLED
+  SEPARATED
+}
+
+enum InterestStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  WITHDRAWN
+}
+
 enum ReportStatus {
   OPEN
   REVIEWED
@@ -24,7 +39,8 @@ enum ReportReason {
   SPAM
   HARASSMENT
   IMPERSONATION
-  ABUSE
+  FALSE_INFORMATION
+  INAPPROPRIATE
   OTHER
 }
 
@@ -33,6 +49,7 @@ model User {
   identityRefHash String    @unique
   identityLast4   String?
   identityName    String?   @db.VarChar(100)
+
   displayName     String    @db.VarChar(80)
   username        String    @unique @db.VarChar(24)
   passwordHash    String?
@@ -43,66 +60,75 @@ model User {
   city            String?   @db.VarChar(80)
   state           String?   @db.VarChar(80)
   country         String    @default("India") @db.VarChar(80)
-  bio             String    @default("") @db.VarChar(280)
+
+  heightCm        Int?
+  maritalStatus   MaritalStatus?
+  education       String    @default("") @db.VarChar(180)
+  occupation      String    @default("") @db.VarChar(180)
+  profileCreatedBy String   @default("SELF") @db.VarChar(32)
+  about           String    @default("") @db.VarChar(1500)
+  familyDetails   String    @default("") @db.VarChar(1200)
+  languages       String    @default("") @db.VarChar(300)
+  interests       String    @default("") @db.VarChar(500)
+
+  preferredMinAge      Int?
+  preferredMaxAge      Int?
+  preferredMinHeightCm Int?
+  preferredMaxHeightCm Int?
+  preferredLocations   String @default("") @db.VarChar(400)
+  preferredEducation   String @default("") @db.VarChar(300)
+  preferredOccupation  String @default("") @db.VarChar(300)
+  partnerNotes         String @default("") @db.VarChar(1200)
+
+  isProfileActive Boolean   @default(true)
   role            UserRole  @default(MEMBER)
   verifiedAt      DateTime  @default(now())
   suspendedAt     DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  posts           Post[]
-  likes           Like[]
-  followers       Follow[]  @relation("following")
-  following       Follow[]  @relation("follower")
-  blocksMade      Block[]   @relation("blocker")
-  blocksReceived  Block[]   @relation("blocked")
-  reportsMade     Report[]  @relation("reporter")
-  reportsAgainst  Report[]  @relation("reportedUser")
-  reportsReviewed Report[]  @relation("reviewedBy")
+  interestsSent     MatchInterest[] @relation("interestSender")
+  interestsReceived MatchInterest[] @relation("interestReceiver")
+  shortlistsMade    Shortlist[]     @relation("shortlistOwner")
+  shortlistedBy     Shortlist[]     @relation("shortlistTarget")
+  blocksMade        Block[]         @relation("blocker")
+  blocksReceived    Block[]         @relation("blocked")
+  reportsMade       Report[]        @relation("reporter")
+  reportsAgainst    Report[]        @relation("reportedUser")
+  reportsReviewed   Report[]        @relation("reviewedBy")
+
+  @@index([gender, isProfileActive, suspendedAt])
+  @@index([city, state])
+  @@index([dateOfBirth])
 }
 
-model Post {
-  id        String    @id @default(uuid())
-  body      String    @db.VarChar(1000)
-  authorId  String
-  parentId  String?
-  hiddenAt  DateTime?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+model MatchInterest {
+  id         String         @id @default(uuid())
+  senderId   String
+  receiverId String
+  status     InterestStatus @default(PENDING)
+  message    String         @default("") @db.VarChar(500)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
 
-  author  User    @relation(fields: [authorId], references: [id], onDelete: Cascade)
-  parent  Post?   @relation("PostReplies", fields: [parentId], references: [id], onDelete: Cascade)
-  replies Post[]  @relation("PostReplies")
-  likes   Like[]
-  reports Report[]
+  sender   User @relation("interestSender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver User @relation("interestReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
 
-  @@index([createdAt])
-  @@index([authorId, createdAt])
-  @@index([parentId, createdAt])
+  @@unique([senderId, receiverId])
+  @@index([receiverId, status, createdAt])
+  @@index([senderId, status, createdAt])
 }
 
-model Follow {
-  followerId  String
-  followingId String
-  createdAt   DateTime @default(now())
-
-  follower  User @relation("follower", fields: [followerId], references: [id], onDelete: Cascade)
-  following User @relation("following", fields: [followingId], references: [id], onDelete: Cascade)
-
-  @@id([followerId, followingId])
-  @@index([followingId])
-}
-
-model Like {
+model Shortlist {
   userId    String
-  postId    String
+  targetId  String
   createdAt DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user   User @relation("shortlistOwner", fields: [userId], references: [id], onDelete: Cascade)
+  target User @relation("shortlistTarget", fields: [targetId], references: [id], onDelete: Cascade)
 
-  @@id([userId, postId])
-  @@index([postId])
+  @@id([userId, targetId])
+  @@index([targetId])
 }
 
 model Block {
@@ -120,8 +146,7 @@ model Block {
 model Report {
   id             String       @id @default(uuid())
   reporterId     String
-  reportedUserId String?
-  postId         String?
+  reportedUserId String
   reason         ReportReason
   details        String       @default("") @db.VarChar(1000)
   status         ReportStatus @default(OPEN)
@@ -131,12 +156,10 @@ model Report {
   updatedAt      DateTime     @updatedAt
 
   reporter     User  @relation("reporter", fields: [reporterId], references: [id], onDelete: Cascade)
-  reportedUser User? @relation("reportedUser", fields: [reportedUserId], references: [id], onDelete: SetNull)
-  post         Post? @relation(fields: [postId], references: [id], onDelete: SetNull)
+  reportedUser User  @relation("reportedUser", fields: [reportedUserId], references: [id], onDelete: Cascade)
   reviewedBy   User? @relation("reviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
 
   @@index([status, createdAt])
   @@index([reporterId])
   @@index([reportedUserId])
-  @@index([postId])
 }
