@@ -1,6 +1,7 @@
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import jwt from "@fastify/jwt";
+import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { config } from "./config.js";
 import { prisma } from "./db.js";
@@ -20,12 +21,71 @@ declare module "@fastify/jwt" {
   }
 }
 
+type RegistrationTokenPayload = {
+  kind: "registration";
+  identityRefHash: string;
+  identityName: string;
+  identityLast4?: string;
+};
+
 const usernameSchema = z.string().trim().toLowerCase().min(3).max(24).regex(/^[a-z0-9_]+$/);
 const reportReasonSchema = z.enum(["SPAM", "HARASSMENT", "IMPERSONATION", "ABUSE", "OTHER"]);
+const passwordSchema = z.string().min(8).max(72);
+
+function normalizePhone(value?: string) {
+  if (!value) return undefined;
+  const normalized = value.replace(/[\s()-]/g, "");
+  return normalized || undefined;
+}
+
+function ageFromDate(date?: Date | null) {
+  if (!date) return null;
+  const today = new Date();
+  let age = today.getUTCFullYear() - date.getUTCFullYear();
+  const monthDifference = today.getUTCMonth() - date.getUTCMonth();
+  if (monthDifference < 0 || (monthDifference === 0 && today.getUTCDate() < date.getUTCDate())) age -= 1;
+  return age;
+}
+
+function guessNameFromFile(fileName: string) {
+  const base = fileName
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b(aadhaar|aadhar|card|front|back|scan|image|img|photo)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!base || /^\d+$/.test(base)) return "";
+  return base.replace(/\b\w/g, (letter) => letter.toUpperCase()).slice(0, 80);
+}
+
+function publicUser(user: {
+  id: string;
+  displayName: string;
+  username: string;
+  bio: string;
+  role: string;
+  verifiedAt: Date;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+}) {
+  return {
+    id: user.id,
+    displayName: user.displayName,
+    username: user.username,
+    bio: user.bio,
+    role: user.role,
+    verifiedAt: user.verifiedAt,
+    city: user.city ?? null,
+    state: user.state ?? null,
+    country: user.country ?? "India",
+  };
+}
 
 async function requireAuth(request: FastifyRequest, reply: FastifyReply) {
   try {
     await request.jwtVerify();
+    if (!request.user?.userId) return reply.code(401).send({ error: "Unauthorized" });
     const member = await prisma.user.findUnique({
       where: { id: request.user.userId },
       select: { suspendedAt: true },
@@ -67,25 +127,29 @@ async function areBlocked(a: string, b: string) {
   return Boolean(block);
 }
 
-function guessNameFromFile(fileName: string) {
-  const base = fileName.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").replace(/\b(aadhaar|aadhar|card|front|back|scan|image|img|photo)\b/gi, " ").replace(/\s+/g, " ").trim();
-  if (!base || /^\d+$/.test(base)) return "";
-  return base.replace(/\b\w/g, (letter) => letter.toUpperCase()).slice(0, 80);
-}
+const postSelect = (viewerId: string) => ({
+  id: true,
+  body: true,
+  createdAt: true,
+  author: { select: { id: true, displayName: true, username: true } },
+  likes: { where: { userId: viewerId }, select: { userId: true } },
+  _count: { select: { likes: true, replies: true } },
+} as const);
 
-function publicUser(user: { id: string; displayName: string; username: string; bio: string; role: string; verifiedAt: Date }) {
-  return {
-    id: user.id,
-    displayName: user.displayName,
-    username: user.username,
-    bio: user.bio,
-    role: user.role,
-    verifiedAt: user.verifiedAt,
-  };
+function shapePost(post: {
+  id: string;
+  body: string;
+  createdAt: Date;
+  author: { id: string; displayName: string; username: string };
+  likes: { userId: string }[];
+  _count: { likes: number; replies: number };
+}) {
+  return { ...post, likedByMe: post.likes.length > 0, likes: undefined };
 }
 
 app.get("/health", async () => ({ ok: true, service: "abbasiconnect-api" }));
 
+// STEP 1: OCR the uploaded Aadhaar card. The image is processed in memory only.
 app.post("/auth/dev-aadhaar/scan", async (request, reply) => {
   const body = z.object({
     fileName: z.string().min(1).max(255),
@@ -102,43 +166,150 @@ app.post("/auth/dev-aadhaar/scan", async (request, reply) => {
         displayName: scan.displayName || guessNameFromFile(body.data.fileName),
         confidence: scan.confidence,
       },
-      note: "The development OCR adapter reads the uploaded image in memory and does not persist it. Aadhaar authenticity verification remains a separate production adapter.",
+      note: "The image is OCR-read in memory and is not written to the AbbasiConnect database.",
     };
   } catch (error) {
     request.log.error(error);
-    return reply.code(422).send({ error: "OCR could not read this image. Try a clearer, front-facing test image." });
+    return reply.code(422).send({ error: "OCR could not read this image. Try a clearer front-facing image." });
   }
 });
 
-app.post("/auth/dev-aadhaar", async (request, reply) => {
+// STEP 2: development stand-in for live Aadhaar authentication.
+// Successful verification returns a short-lived registration proof. It does NOT create a user.
+app.post("/auth/dev-aadhaar/verify", async (request, reply) => {
   const body = z.object({
-    displayName: z.string().trim().min(2).max(80),
-    username: usernameSchema.optional(),
+    identityName: z.string().trim().min(2).max(100),
     reference: z.string().trim().min(4).max(100),
     last4: z.string().regex(/^\d{4}$/).optional(),
   }).safeParse(request.body);
 
-  if (!body.success) return reply.code(400).send({ error: "Invalid verification payload" });
+  if (!body.success) return reply.code(400).send({ error: "Invalid identity verification payload" });
 
   const identityRefHash = hashIdentityReference(body.data.reference);
-  let user = await prisma.user.findUnique({ where: { identityRefHash } });
+  const existing = await prisma.user.findUnique({
+    where: { identityRefHash },
+    select: { id: true },
+  });
+  if (existing) return reply.code(409).send({ error: "This Aadhaar-linked identity already has an account. Sign in instead." });
 
-  if (!user) {
-    if (!body.data.username) return reply.code(400).send({ error: "Choose a username to create your account" });
-    const taken = await prisma.user.findUnique({ where: { username: body.data.username }, select: { id: true } });
-    if (taken) return reply.code(409).send({ error: "That username is already taken" });
+  const registrationToken = app.jwt.sign({
+    kind: "registration",
+    identityRefHash,
+    identityName: body.data.identityName,
+    identityLast4: body.data.last4,
+  } satisfies RegistrationTokenPayload, { expiresIn: "15m" });
 
-    user = await prisma.user.create({
-      data: {
-        identityRefHash,
-        identityLast4: body.data.last4,
-        displayName: body.data.displayName,
-        username: body.data.username,
-      },
-    });
+  return {
+    verified: true,
+    registrationToken,
+    identityName: body.data.identityName,
+    expiresInMinutes: 15,
+  };
+});
+
+// STEP 3: collect account details and create the one account linked to that verified identity.
+app.post("/auth/register", async (request, reply) => {
+  const body = z.object({
+    registrationToken: z.string().min(20),
+    displayName: z.string().trim().min(2).max(80),
+    username: usernameSchema,
+    password: passwordSchema,
+    email: z.string().trim().max(254).optional(),
+    phone: z.string().trim().max(30).optional(),
+    dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    gender: z.string().trim().max(32).optional(),
+    city: z.string().trim().max(80).optional(),
+    state: z.string().trim().max(80).optional(),
+    country: z.string().trim().min(2).max(80).default("India"),
+    bio: z.string().trim().max(280).optional(),
+  }).safeParse(request.body);
+
+  if (!body.success) return reply.code(400).send({ error: "Check the registration details and try again" });
+
+  let registration: RegistrationTokenPayload;
+  try {
+    registration = app.jwt.verify<RegistrationTokenPayload>(body.data.registrationToken);
+  } catch {
+    return reply.code(401).send({ error: "Aadhaar verification has expired. Verify again." });
+  }
+  if (registration.kind !== "registration" || !registration.identityRefHash) {
+    return reply.code(401).send({ error: "Invalid registration proof" });
   }
 
+  const email = body.data.email?.toLowerCase() || undefined;
+  const phone = normalizePhone(body.data.phone);
+  if (!email && !phone) return reply.code(400).send({ error: "Enter at least an email address or contact number" });
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return reply.code(400).send({ error: "Enter a valid email address" });
+  if (phone && !/^\+?[1-9]\d{7,14}$/.test(phone)) return reply.code(400).send({ error: "Enter a valid contact number with country code" });
+
+  const dateOfBirth = new Date(`${body.data.dateOfBirth}T00:00:00.000Z`);
+  const today = new Date();
+  if (Number.isNaN(dateOfBirth.getTime()) || dateOfBirth > today || dateOfBirth.getUTCFullYear() < 1900) {
+    return reply.code(400).send({ error: "Enter a valid date of birth" });
+  }
+
+  const conflicts = await prisma.user.findFirst({
+    where: {
+      OR: [
+        { identityRefHash: registration.identityRefHash },
+        { username: body.data.username },
+        ...(email ? [{ email }] : []),
+        ...(phone ? [{ phone }] : []),
+      ],
+    },
+    select: { identityRefHash: true, username: true, email: true, phone: true },
+  });
+
+  if (conflicts) {
+    if (conflicts.identityRefHash === registration.identityRefHash) return reply.code(409).send({ error: "This Aadhaar-linked identity already has an account" });
+    if (conflicts.username === body.data.username) return reply.code(409).send({ error: "That username is already taken" });
+    if (email && conflicts.email === email) return reply.code(409).send({ error: "That email address is already registered" });
+    if (phone && conflicts.phone === phone) return reply.code(409).send({ error: "That contact number is already registered" });
+  }
+
+  const passwordHash = await bcrypt.hash(body.data.password, 12);
+
+  try {
+    const user = await prisma.user.create({
+      data: {
+        identityRefHash: registration.identityRefHash,
+        identityLast4: registration.identityLast4,
+        identityName: registration.identityName,
+        displayName: body.data.displayName,
+        username: body.data.username,
+        passwordHash,
+        email,
+        phone,
+        dateOfBirth,
+        gender: body.data.gender || null,
+        city: body.data.city || null,
+        state: body.data.state || null,
+        country: body.data.country,
+        bio: body.data.bio || "",
+      },
+    });
+    const token = app.jwt.sign({ userId: user.id }, { expiresIn: "30d" });
+    return reply.code(201).send({ token, user: publicUser(user) });
+  } catch (error) {
+    request.log.error(error);
+    return reply.code(409).send({ error: "Account details conflict with an existing account" });
+  }
+});
+
+// Normal returning-user sign in. Aadhaar is not needed again.
+app.post("/auth/sign-in", async (request, reply) => {
+  const body = z.object({
+    username: usernameSchema,
+    password: z.string().min(1).max(72),
+  }).safeParse(request.body);
+  if (!body.success) return reply.code(400).send({ error: "Enter your username and password" });
+
+  const user = await prisma.user.findUnique({ where: { username: body.data.username } });
+  if (!user || !user.passwordHash) return reply.code(401).send({ error: "Incorrect username or password" });
   if (user.suspendedAt) return reply.code(403).send({ error: "Account unavailable" });
+
+  const valid = await bcrypt.compare(body.data.password, user.passwordHash);
+  if (!valid) return reply.code(401).send({ error: "Incorrect username or password" });
 
   const token = app.jwt.sign({ userId: user.id }, { expiresIn: "30d" });
   return { token, user: publicUser(user) };
@@ -151,6 +322,13 @@ app.get("/auth/me", { preHandler: requireAuth }, async (request, reply) => {
       id: true,
       displayName: true,
       username: true,
+      email: true,
+      phone: true,
+      dateOfBirth: true,
+      gender: true,
+      city: true,
+      state: true,
+      country: true,
       bio: true,
       role: true,
       verifiedAt: true,
@@ -159,7 +337,11 @@ app.get("/auth/me", { preHandler: requireAuth }, async (request, reply) => {
     },
   });
   if (!user) return reply.code(404).send({ error: "User not found" });
-  return user;
+  return {
+    ...user,
+    dateOfBirth: user.dateOfBirth?.toISOString().slice(0, 10) ?? null,
+    age: ageFromDate(user.dateOfBirth),
+  };
 });
 
 app.patch("/users/me", { preHandler: requireAuth }, async (request, reply) => {
@@ -167,19 +349,64 @@ app.patch("/users/me", { preHandler: requireAuth }, async (request, reply) => {
     displayName: z.string().trim().min(2).max(80),
     username: usernameSchema,
     bio: z.string().trim().max(280),
+    email: z.string().trim().max(254).optional(),
+    phone: z.string().trim().max(30).optional(),
+    gender: z.string().trim().max(32).optional(),
+    city: z.string().trim().max(80).optional(),
+    state: z.string().trim().max(80).optional(),
+    country: z.string().trim().min(2).max(80).optional(),
   }).safeParse(request.body);
   if (!body.success) return reply.code(400).send({ error: "Invalid profile details" });
 
+  const email = body.data.email?.toLowerCase() || undefined;
+  const phone = normalizePhone(body.data.phone);
+  if (!email && !phone) return reply.code(400).send({ error: "Keep at least an email address or contact number on the account" });
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return reply.code(400).send({ error: "Enter a valid email address" });
+  if (phone && !/^\+?[1-9]\d{7,14}$/.test(phone)) return reply.code(400).send({ error: "Enter a valid contact number" });
+
   const taken = await prisma.user.findFirst({
-    where: { username: body.data.username, NOT: { id: request.user.userId } },
-    select: { id: true },
+    where: {
+      NOT: { id: request.user.userId },
+      OR: [
+        { username: body.data.username },
+        ...(email ? [{ email }] : []),
+        ...(phone ? [{ phone }] : []),
+      ],
+    },
+    select: { username: true, email: true, phone: true },
   });
-  if (taken) return reply.code(409).send({ error: "That username is already taken" });
+  if (taken?.username === body.data.username) return reply.code(409).send({ error: "That username is already taken" });
+  if (email && taken?.email === email) return reply.code(409).send({ error: "That email is already registered" });
+  if (phone && taken?.phone === phone) return reply.code(409).send({ error: "That contact number is already registered" });
 
   return prisma.user.update({
     where: { id: request.user.userId },
-    data: body.data,
-    select: { id: true, displayName: true, username: true, bio: true, role: true, verifiedAt: true },
+    data: {
+      displayName: body.data.displayName,
+      username: body.data.username,
+      bio: body.data.bio,
+      email: email ?? null,
+      phone: phone ?? null,
+      gender: body.data.gender || null,
+      city: body.data.city || null,
+      state: body.data.state || null,
+      country: body.data.country || "India",
+    },
+    select: {
+      id: true,
+      displayName: true,
+      username: true,
+      email: true,
+      phone: true,
+      gender: true,
+      city: true,
+      state: true,
+      country: true,
+      bio: true,
+      role: true,
+      verifiedAt: true,
+      dateOfBirth: true,
+    },
   });
 });
 
@@ -204,6 +431,9 @@ app.get("/users/search", { preHandler: requireAuth }, async (request, reply) => 
       displayName: true,
       username: true,
       bio: true,
+      city: true,
+      state: true,
+      country: true,
       verifiedAt: true,
       followers: { where: { followerId: request.user.userId }, select: { followerId: true } },
       _count: { select: { followers: true, following: true } },
@@ -224,6 +454,9 @@ app.get("/users/:username", { preHandler: requireAuth }, async (request, reply) 
       displayName: true,
       username: true,
       bio: true,
+      city: true,
+      state: true,
+      country: true,
       verifiedAt: true,
       suspendedAt: true,
       followers: { where: { followerId: request.user.userId }, select: { followerId: true } },
@@ -231,14 +464,7 @@ app.get("/users/:username", { preHandler: requireAuth }, async (request, reply) 
         where: { parentId: null, hiddenAt: null },
         orderBy: { createdAt: "desc" },
         take: 50,
-        select: {
-          id: true,
-          body: true,
-          createdAt: true,
-          author: { select: { id: true, displayName: true, username: true } },
-          likes: { where: { userId: request.user.userId }, select: { userId: true } },
-          _count: { select: { likes: true, replies: true } },
-        },
+        select: postSelect(request.user.userId),
       },
       _count: { select: { followers: true, following: true } },
     },
@@ -252,117 +478,18 @@ app.get("/users/:username", { preHandler: requireAuth }, async (request, reply) 
     suspendedAt: undefined,
     isFollowing: user.followers.length > 0,
     followers: undefined,
-    posts: user.posts.map((post) => ({ ...post, likedByMe: post.likes.length > 0, likes: undefined })),
+    posts: user.posts.map(shapePost),
   };
-});
-
-app.get("/feed", { preHandler: requireAuth }, async (request) => {
-  const blocked = await blockedIdsFor(request.user.userId);
-  const posts = await prisma.post.findMany({
-    where: {
-      parentId: null,
-      hiddenAt: null,
-      authorId: { notIn: blocked },
-      author: { suspendedAt: null },
-    },
-    orderBy: { createdAt: "desc" },
-    take: 100,
-    select: {
-      id: true,
-      body: true,
-      createdAt: true,
-      author: { select: { id: true, displayName: true, username: true } },
-      likes: { where: { userId: request.user.userId }, select: { userId: true } },
-      _count: { select: { likes: true, replies: true } },
-    },
-  });
-  return { posts: posts.map((post) => ({ ...post, likedByMe: post.likes.length > 0, likes: undefined })) };
-});
-
-app.post("/posts", { preHandler: requireAuth }, async (request, reply) => {
-  const body = z.object({ body: z.string().trim().min(1).max(1000) }).safeParse(request.body);
-  if (!body.success) return reply.code(400).send({ error: "Post must be between 1 and 1000 characters" });
-
-  const post = await prisma.post.create({
-    data: { body: body.data.body, authorId: request.user.userId },
-    select: {
-      id: true,
-      body: true,
-      createdAt: true,
-      author: { select: { id: true, displayName: true, username: true } },
-      _count: { select: { likes: true, replies: true } },
-    },
-  });
-  return reply.code(201).send({ ...post, likedByMe: false });
-});
-
-app.get("/posts/:id/replies", { preHandler: requireAuth }, async (request, reply) => {
-  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-  if (!params.success) return reply.code(400).send({ error: "Invalid post id" });
-  const blocked = await blockedIdsFor(request.user.userId);
-
-  const replies = await prisma.post.findMany({
-    where: { parentId: params.data.id, hiddenAt: null, authorId: { notIn: blocked }, author: { suspendedAt: null } },
-    orderBy: { createdAt: "asc" },
-    select: {
-      id: true,
-      body: true,
-      createdAt: true,
-      author: { select: { id: true, displayName: true, username: true } },
-      likes: { where: { userId: request.user.userId }, select: { userId: true } },
-      _count: { select: { likes: true, replies: true } },
-    },
-  });
-  return { replies: replies.map((post) => ({ ...post, likedByMe: post.likes.length > 0, likes: undefined })) };
-});
-
-app.post("/posts/:id/replies", { preHandler: requireAuth }, async (request, reply) => {
-  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-  const body = z.object({ body: z.string().trim().min(1).max(1000) }).safeParse(request.body);
-  if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid reply" });
-
-  const parent = await prisma.post.findUnique({ where: { id: params.data.id }, select: { authorId: true, hiddenAt: true } });
-  if (!parent || parent.hiddenAt) return reply.code(404).send({ error: "Post not found" });
-  if (await areBlocked(parent.authorId, request.user.userId)) return reply.code(404).send({ error: "Post not found" });
-
-  const post = await prisma.post.create({
-    data: { body: body.data.body, authorId: request.user.userId, parentId: params.data.id },
-    select: {
-      id: true,
-      body: true,
-      createdAt: true,
-      author: { select: { id: true, displayName: true, username: true } },
-      _count: { select: { likes: true, replies: true } },
-    },
-  });
-  return reply.code(201).send({ ...post, likedByMe: false });
-});
-
-app.post("/posts/:id/like", { preHandler: requireAuth }, async (request, reply) => {
-  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-  if (!params.success) return reply.code(400).send({ error: "Invalid post id" });
-  const post = await prisma.post.findUnique({ where: { id: params.data.id }, select: { authorId: true, hiddenAt: true } });
-  if (!post || post.hiddenAt || await areBlocked(post.authorId, request.user.userId)) return reply.code(404).send({ error: "Post not found" });
-  await prisma.like.upsert({
-    where: { userId_postId: { userId: request.user.userId, postId: params.data.id } },
-    create: { userId: request.user.userId, postId: params.data.id },
-    update: {},
-  });
-  return { ok: true };
-});
-
-app.delete("/posts/:id/like", { preHandler: requireAuth }, async (request, reply) => {
-  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-  if (!params.success) return reply.code(400).send({ error: "Invalid post id" });
-  await prisma.like.deleteMany({ where: { userId: request.user.userId, postId: params.data.id } });
-  return { ok: true };
 });
 
 app.post("/users/:id/follow", { preHandler: requireAuth }, async (request, reply) => {
   const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-  if (!params.success || params.data.id === request.user.userId) return reply.code(400).send({ error: "Invalid user" });
-  const target = await prisma.user.findUnique({ where: { id: params.data.id }, select: { id: true, suspendedAt: true } });
-  if (!target || target.suspendedAt || await areBlocked(params.data.id, request.user.userId)) return reply.code(404).send({ error: "User not found" });
+  if (!params.success) return reply.code(400).send({ error: "Invalid user id" });
+  if (params.data.id === request.user.userId) return reply.code(400).send({ error: "You cannot follow yourself" });
+  if (await areBlocked(params.data.id, request.user.userId)) return reply.code(404).send({ error: "User not found" });
+
+  const target = await prisma.user.findUnique({ where: { id: params.data.id }, select: { suspendedAt: true } });
+  if (!target || target.suspendedAt) return reply.code(404).send({ error: "User not found" });
 
   await prisma.follow.upsert({
     where: { followerId_followingId: { followerId: request.user.userId, followingId: params.data.id } },
@@ -381,9 +508,8 @@ app.delete("/users/:id/follow", { preHandler: requireAuth }, async (request, rep
 
 app.post("/users/:id/block", { preHandler: requireAuth }, async (request, reply) => {
   const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
-  if (!params.success || params.data.id === request.user.userId) return reply.code(400).send({ error: "Invalid user" });
-  const target = await prisma.user.findUnique({ where: { id: params.data.id }, select: { id: true } });
-  if (!target) return reply.code(404).send({ error: "User not found" });
+  if (!params.success) return reply.code(400).send({ error: "Invalid user id" });
+  if (params.data.id === request.user.userId) return reply.code(400).send({ error: "You cannot block yourself" });
 
   await prisma.$transaction([
     prisma.block.upsert({
@@ -410,25 +536,104 @@ app.delete("/users/:id/block", { preHandler: requireAuth }, async (request, repl
   return { ok: true };
 });
 
+app.get("/feed", { preHandler: requireAuth }, async (request) => {
+  const blocked = await blockedIdsFor(request.user.userId);
+  const posts = await prisma.post.findMany({
+    where: {
+      parentId: null,
+      hiddenAt: null,
+      authorId: { notIn: blocked },
+      author: { suspendedAt: null },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+    select: postSelect(request.user.userId),
+  });
+  return { posts: posts.map(shapePost) };
+});
+
+app.post("/posts", { preHandler: requireAuth }, async (request, reply) => {
+  const body = z.object({ body: z.string().trim().min(1).max(1000) }).safeParse(request.body);
+  if (!body.success) return reply.code(400).send({ error: "Post must be between 1 and 1000 characters" });
+
+  const post = await prisma.post.create({
+    data: { body: body.data.body, authorId: request.user.userId },
+    select: postSelect(request.user.userId),
+  });
+  return reply.code(201).send(shapePost(post));
+});
+
+app.get("/posts/:id/replies", { preHandler: requireAuth }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: "Invalid post id" });
+  const blocked = await blockedIdsFor(request.user.userId);
+
+  const replies = await prisma.post.findMany({
+    where: { parentId: params.data.id, hiddenAt: null, authorId: { notIn: blocked }, author: { suspendedAt: null } },
+    orderBy: { createdAt: "asc" },
+    select: postSelect(request.user.userId),
+  });
+  return { replies: replies.map(shapePost) };
+});
+
+app.post("/posts/:id/replies", { preHandler: requireAuth }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  const body = z.object({ body: z.string().trim().min(1).max(1000) }).safeParse(request.body);
+  if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid reply" });
+
+  const parent = await prisma.post.findUnique({ where: { id: params.data.id }, select: { authorId: true, hiddenAt: true } });
+  if (!parent || parent.hiddenAt) return reply.code(404).send({ error: "Post not found" });
+  if (await areBlocked(parent.authorId, request.user.userId)) return reply.code(404).send({ error: "Post not found" });
+
+  const post = await prisma.post.create({
+    data: { body: body.data.body, authorId: request.user.userId, parentId: params.data.id },
+    select: postSelect(request.user.userId),
+  });
+  return reply.code(201).send(shapePost(post));
+});
+
+app.post("/posts/:id/like", { preHandler: requireAuth }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: "Invalid post id" });
+  const post = await prisma.post.findUnique({ where: { id: params.data.id }, select: { authorId: true, hiddenAt: true } });
+  if (!post || post.hiddenAt || await areBlocked(post.authorId, request.user.userId)) return reply.code(404).send({ error: "Post not found" });
+
+  await prisma.like.upsert({
+    where: { userId_postId: { userId: request.user.userId, postId: params.data.id } },
+    create: { userId: request.user.userId, postId: params.data.id },
+    update: {},
+  });
+  return { ok: true };
+});
+
+app.delete("/posts/:id/like", { preHandler: requireAuth }, async (request, reply) => {
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: "Invalid post id" });
+  await prisma.like.deleteMany({ where: { userId: request.user.userId, postId: params.data.id } });
+  return { ok: true };
+});
+
 app.post("/reports", { preHandler: requireAuth }, async (request, reply) => {
   const body = z.object({
+    reportedUserId: z.string().uuid().optional(),
     postId: z.string().uuid().optional(),
-    userId: z.string().uuid().optional(),
     reason: reportReasonSchema,
     details: z.string().trim().max(1000).default(""),
-  }).refine((value) => Boolean(value.postId || value.userId), "Report target required").safeParse(request.body);
+  }).refine((value) => Boolean(value.reportedUserId || value.postId), { message: "Report a member or post" }).safeParse(request.body);
+
   if (!body.success) return reply.code(400).send({ error: "Invalid report" });
 
-  if (body.data.postId) {
-    const post = await prisma.post.findUnique({ where: { id: body.data.postId }, select: { id: true, authorId: true } });
+  let reportedUserId = body.data.reportedUserId;
+  if (body.data.postId && !reportedUserId) {
+    const post = await prisma.post.findUnique({ where: { id: body.data.postId }, select: { authorId: true } });
     if (!post) return reply.code(404).send({ error: "Post not found" });
-    body.data.userId ??= post.authorId;
+    reportedUserId = post.authorId;
   }
 
   const report = await prisma.report.create({
     data: {
       reporterId: request.user.userId,
-      reportedUserId: body.data.userId,
+      reportedUserId,
       postId: body.data.postId,
       reason: body.data.reason,
       details: body.data.details,
@@ -440,18 +645,13 @@ app.post("/reports", { preHandler: requireAuth }, async (request, reply) => {
 
 app.get("/moderation/reports", { preHandler: requireModerator }, async () => {
   const reports = await prisma.report.findMany({
-    where: { status: { in: ["OPEN", "REVIEWED"] } },
-    orderBy: { createdAt: "asc" },
+    orderBy: { createdAt: "desc" },
     take: 100,
-    select: {
-      id: true,
-      reason: true,
-      details: true,
-      status: true,
-      createdAt: true,
+    include: {
       reporter: { select: { id: true, displayName: true, username: true } },
       reportedUser: { select: { id: true, displayName: true, username: true, suspendedAt: true } },
-      post: { select: { id: true, body: true, hiddenAt: true, authorId: true } },
+      post: { select: { id: true, body: true, hiddenAt: true } },
+      reviewedBy: { select: { id: true, displayName: true, username: true } },
     },
   });
   return { reports };
@@ -460,33 +660,45 @@ app.get("/moderation/reports", { preHandler: requireModerator }, async () => {
 app.patch("/moderation/reports/:id", { preHandler: requireModerator }, async (request, reply) => {
   const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
   const body = z.object({
-    action: z.enum(["dismiss", "review", "hide_post", "restore_post", "suspend_user", "restore_user"]),
-    note: z.string().trim().max(1000).default(""),
+    action: z.enum(["REVIEW", "DISMISS", "HIDE_POST", "RESTORE_POST", "SUSPEND_USER", "RESTORE_USER"]),
+    note: z.string().trim().max(1000).optional(),
   }).safeParse(request.body);
-  if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid moderation request" });
+  if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid moderation action" });
 
-  const report = await prisma.report.findUnique({
-    where: { id: params.data.id },
-    select: { id: true, postId: true, reportedUserId: true },
-  });
+  const report = await prisma.report.findUnique({ where: { id: params.data.id } });
   if (!report) return reply.code(404).send({ error: "Report not found" });
 
-  const now = new Date();
-  if (body.data.action === "hide_post" && report.postId) await prisma.post.update({ where: { id: report.postId }, data: { hiddenAt: now } });
-  if (body.data.action === "restore_post" && report.postId) await prisma.post.update({ where: { id: report.postId }, data: { hiddenAt: null } });
-  if (body.data.action === "suspend_user" && report.reportedUserId) await prisma.user.update({ where: { id: report.reportedUserId }, data: { suspendedAt: now } });
-  if (body.data.action === "restore_user" && report.reportedUserId) await prisma.user.update({ where: { id: report.reportedUserId }, data: { suspendedAt: null } });
+  if (body.data.action === "HIDE_POST" || body.data.action === "RESTORE_POST") {
+    if (!report.postId) return reply.code(400).send({ error: "This report has no post" });
+    await prisma.post.update({
+      where: { id: report.postId },
+      data: { hiddenAt: body.data.action === "HIDE_POST" ? new Date() : null },
+    });
+  }
 
-  const status = body.data.action === "dismiss" ? "DISMISSED" : body.data.action === "review" ? "REVIEWED" : "ACTIONED";
-  return prisma.report.update({
+  if (body.data.action === "SUSPEND_USER" || body.data.action === "RESTORE_USER") {
+    if (!report.reportedUserId) return reply.code(400).send({ error: "This report has no member" });
+    await prisma.user.update({
+      where: { id: report.reportedUserId },
+      data: { suspendedAt: body.data.action === "SUSPEND_USER" ? new Date() : null },
+    });
+  }
+
+  const status = body.data.action === "DISMISS"
+    ? "DISMISSED"
+    : body.data.action === "REVIEW"
+      ? "REVIEWED"
+      : "ACTIONED";
+
+  const updated = await prisma.report.update({
     where: { id: params.data.id },
     data: {
       status,
       reviewedById: request.user.userId,
-      moderationNote: body.data.note,
+      moderationNote: body.data.note || report.moderationNote,
     },
-    select: { id: true, status: true, moderationNote: true, updatedAt: true },
   });
+  return updated;
 });
 
 const close = async () => {
