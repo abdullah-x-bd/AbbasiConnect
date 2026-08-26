@@ -1,42 +1,63 @@
 # AbbasiConnect
 
-AbbasiConnect is a minimal, text-only social platform built around verified human identity.
+AbbasiConnect is a verified, text-only matrimonial platform.
 
-The product deliberately has no social profile photos, video, stories, reels, or media feed. Aadhaar card imagery is treated only as temporary identity-onboarding input.
+It is deliberately designed without matrimonial profile photos, galleries, video, stories, reels, posts, public walls, follower counts, likes, or social-media feeds.
 
-## Account model
+The only image flow in the product is temporary Aadhaar-card input during identity verification. That image is not a matrimonial profile image and is not stored as profile media.
 
-The product now has two completely separate entry paths.
+## Core product idea
 
-### Register
+```text
+Register / Sign in
+       |
+       v
+Verified matrimonial profile
+       |
+       +--> Browse text profiles
+       +--> Search and filter
+       +--> Shortlist
+       +--> Send interest
+       +--> Accept / decline
+       +--> Mutual interest
+       +--> Contact details unlocked
+```
+
+## Registration
 
 ```text
 Register
   -> upload Aadhaar card image
   -> OCR reads the name
-  -> Aadhaar verification adapter verifies the identity
+  -> Aadhaar verification adapter verifies identity
   -> short-lived registration proof
-  -> account details page
-  -> create account
+  -> create account and matrimonial profile
 ```
 
-The account-details page collects:
+The account creation form collects:
 
-- name
+- display name
 - username
-- password and password confirmation
-- email and/or contact number, with at least one required
-- date of birth, with age calculated from DOB
-- optional gender
-- optional city and state
-- country
-- optional short bio
+- password
+- email and/or contact number
+- date of birth
+- gender
+- height
+- marital status
+- education
+- occupation
+- city, state and country
+- languages
+- about text
+- family details
+- interests
+- who created the profile, such as self, parent, family or guardian
 
 Passwords are stored only as bcrypt hashes.
 
-The verified identity is linked one-to-one to the account through the unique `identityRefHash` field. The Aadhaar card image is not stored in the social database and the identity reference is not exposed on public profiles.
+Each account is linked one-to-one with the verified identity through a unique internal `identityRefHash`.
 
-### Sign in
+## Sign in
 
 Returning users do not repeat Aadhaar onboarding.
 
@@ -44,115 +65,148 @@ Returning users do not repeat Aadhaar onboarding.
 Sign in
   -> username
   -> password
-  -> AbbasiConnect session
+  -> session
 ```
 
-## Implemented product scope
+## Text-only matrimonial profiles
 
-### 1. Identity and account onboarding
+A browse card can contain:
 
-- landing screen with `Register` and `Sign in`
-- Aadhaar-card photo upload flow
-- backend OCR using Tesseract.js
-- likely English name extraction from OCR text
-- development Aadhaar verification adapter
-- short-lived registration proof after identity verification
-- account-details page after Aadhaar verification
-- one verified identity mapped to one account
-- username/password authentication for returning users
-- bcrypt password hashing
-- private email/contact/DOB account fields
-- no permanent Aadhaar-card image field in the social database
+```text
+Name
+@username
+Verified identity
+Age
+Height
+Marital status
+Location
+Education
+Occupation
+Short about section
+```
 
-The OCR piece is implemented. Live UIDAI Aadhaar authentication is still represented by the development verification reference and remains behind the replaceable identity adapter.
+There is no profile-photo field or profile-image component.
 
-### 2. Member discovery
+A full profile can additionally contain:
 
-- search by display name
-- search by username
-- blocked/suspended accounts excluded from discovery
+- family details
+- languages
+- interests
+- profile-created-by information
+- partner preferences
+- preferred age range
+- preferred height range
+- preferred locations
+- preferred education
+- preferred occupation
+- additional preference notes
 
-### 3. Profiles and connections
+## Browse and discovery
 
-- public text profile
-- editable display name
-- editable username
-- short bio
-- optional location
-- private account details page for the signed-in user
-- follower/following counts
-- follow/unfollow
-- member post history
+Profiles can be filtered by:
 
-### 4. Replies
+- text search
+- gender
+- city
+- marital status
+- minimum age
+- maximum age
 
-- text replies on posts
-- reply counts
-- nested reply display under the parent post
+The backend also supports height filters.
 
-### 5. Likes
+Paused, suspended and blocked profiles are excluded from normal discovery.
 
-- like/unlike posts and replies
-- like counts
-- current-user like state
+## Interests
 
-### 6. Safety and moderation
+Instead of following people, users send matrimonial interests.
 
-- block members
-- blocking removes follows in both directions
-- blocked members no longer appear to each other in feed/search/profile access
-- report posts or members
+```text
+Profile A -> Send interest -> Profile B
+```
+
+The recipient can:
+
+- accept
+- decline
+
+The sender can withdraw a pending interest.
+
+If both sides independently express interest, the existing pending request becomes accepted automatically.
+
+## Mutual interest and contact privacy
+
+Email and phone are private account data.
+
+They are not returned in browse results or normal public profile responses.
+
+Contact details become visible when:
+
+1. the profile is your own account, or
+2. an interest between the two profiles has status `ACCEPTED`
+
+```text
+No mutual interest
+    -> profile details only
+
+Accepted interest
+    -> profile details + email/phone
+```
+
+## Shortlist
+
+Users can privately shortlist profiles for later review.
+
+Shortlisting is not visible to the shortlisted person.
+
+## Safety
+
+The matrimonial pivot keeps:
+
+- block
+- profile reporting
 - moderator/admin roles
 - moderation queue
-- mark reports reviewed
-- dismiss reports
-- hide/restore posts
-- suspend/restore users
+- suspend/restore profile actions
+
+Blocking removes outstanding interest and shortlist relationships between the two accounts.
+
+## Data model
+
+The old social models have been removed.
+
+Current primary models:
+
+- `User`
+- `MatchInterest`
+- `Shortlist`
+- `Block`
+- `Report`
+
+Current important enums:
+
+- `UserRole`
+- `MaritalStatus`
+- `InterestStatus`
+- `ReportStatus`
+- `ReportReason`
+
+There are no `Post`, `Like`, or `Follow` models in the matrimonial schema.
 
 ## Architecture
 
 ```text
-apps/web      React + Vite web client
-apps/api      Fastify API + Prisma ORM + Tesseract OCR
-PostgreSQL    persistent database
+apps/web      React + Vite
+apps/api      Fastify + Prisma + Tesseract OCR
+PostgreSQL    database
 
 Browser -> API -> PostgreSQL
              |
-             +-> temporary OCR card scan
+             +-> temporary Aadhaar OCR
              |
-             -> Identity verification adapter
+             -> Aadhaar verification adapter
 ```
 
-The backend remains the canonical application layer so later clients can use the same API without changing the social data model.
-
-## Data model
-
-The `User` model now includes account credentials/profile fields in addition to the social graph:
-
-- unique internal Aadhaar-linked identity reference hash
-- optional last four digits for development display/support use
-- identity-derived name
-- display name
-- username
-- password hash
-- email
-- phone
-- date of birth
-- optional gender/location
-- role and moderation state
-
-Social models:
-
-- `User`
-- `Post`
-- `Follow`
-- `Like`
-- `Block`
-- `Report`
-
-Replies are represented as posts with `parentId`.
-
-## Fresh local setup
+## Local setup
 
 Requirements:
 
@@ -174,23 +228,11 @@ Copy-Item apps/api/.env.example apps/api/.env
 Copy-Item apps/web/.env.example apps/web/.env
 ```
 
-macOS/Linux:
-
-```bash
-cp apps/api/.env.example apps/api/.env
-cp apps/web/.env.example apps/web/.env
-```
-
-Generate the Prisma client and create a fresh database schema:
+Generate Prisma and create a fresh database:
 
 ```bash
 npm run db:generate
 npm run db:init
-```
-
-Start the product:
-
-```bash
 npm run dev
 ```
 
@@ -200,17 +242,11 @@ Open:
 http://localhost:5173
 ```
 
-API health check:
+## Upgrading an existing development database
 
-```text
-http://localhost:3001/health
-```
+The matrimonial pivot removes the old post/follow/like social tables and changes the User model substantially.
 
-The first OCR operation may need to obtain Tesseract's English recognition data. After the card is read, the image is not written to the AbbasiConnect database.
-
-## Upgrading an earlier local AbbasiConnect database
-
-If you already ran an earlier starter locally:
+For a development database:
 
 ```bash
 git pull
@@ -220,33 +256,21 @@ npm run db:upgrade
 npm run dev
 ```
 
-The new credential fields are migration-compatible with old development rows. Old accounts created before password authentication have no usable password and should be replaced with fresh development accounts through the new Register flow.
+Because this is still an early development project, resetting the local database and creating fresh matrimonial test accounts may be simpler if Prisma reports migration conflicts caused by old social test data.
 
-## Development registration
+## Development Aadhaar flow
 
-Use a test Aadhaar-like image for local development. OCR will attempt to read the name.
+Use a test Aadhaar-like image during local development rather than real identity documents.
 
-For the development verification stage use a fake unique reference such as:
+The OCR layer reads the image in memory and attempts to extract the name.
+
+The current Aadhaar authentication provider is still simulated using a development reference such as:
 
 ```text
 DEV-ABBASI-001
 ```
 
-That fake reference stands in for the unique reference returned by a future production Aadhaar authentication adapter. Once used to create an account, the same reference cannot create another account.
-
-After verification, complete the account form and choose a password. On later visits use `Sign in` with the username and password only.
-
-The production boundary is documented in `docs/AADHAAR_INTEGRATION.md`.
-
-## Testing moderation locally
-
-New accounts have the `MEMBER` role.
-
-```bash
-npm run db:studio
-```
-
-Open the `User` table, find your test account, change `role` from `MEMBER` to `MODERATOR`, save it, then sign out and sign in again. A `Moderation` tab will appear.
+Live UIDAI/Aadhaar-provider integration remains a later step behind the existing verification adapter.
 
 ## Current API surface
 
@@ -259,31 +283,33 @@ POST   /auth/register
 POST   /auth/sign-in
 GET    /auth/me
 
-PATCH  /users/me
-GET    /users/search
-GET    /users/:username
-POST   /users/:id/follow
-DELETE /users/:id/follow
-POST   /users/:id/block
-DELETE /users/:id/block
+PATCH  /profiles/me
+GET    /profiles/browse
+GET    /profiles/:username
+POST   /profiles/:id/interest
+POST   /profiles/:id/shortlist
+DELETE /profiles/:id/shortlist
+POST   /profiles/:id/block
+DELETE /profiles/:id/block
 
-GET    /feed
-POST   /posts
-GET    /posts/:id/replies
-POST   /posts/:id/replies
-POST   /posts/:id/like
-DELETE /posts/:id/like
+GET    /interests
+PATCH  /interests/:id
+GET    /shortlist
 
 POST   /reports
 GET    /moderation/reports
 PATCH  /moderation/reports/:id
 ```
 
-## What remains intentionally deferred
+## Intentionally deferred
 
-- verified Aadhaar QR/offline e-KYC parsing
-- live UIDAI/Aadhaar authentication provider integration
-- email/contact OTP verification and account recovery
+- live UIDAI/Aadhaar authentication provider
+- email OTP verification
+- phone OTP verification
+- password recovery
+- private messaging after mutual interest
 - notifications
-- public deployment
+- deployment
 - mobile clients
+
+The product is now structurally a matrimonial service, not a social-media network.
