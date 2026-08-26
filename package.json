@@ -5,8 +5,9 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "concurrently \"npm run dev -w @abbasiconnect/api\" \"npm run dev -w @abbasiconnect/web\"",
+    "dev": "concurrently \"npm run dev -w @abbasiconnect/api\" \"npm run dev:admin -w @abbasiconnect/api\" \"npm run dev -w @abbasiconnect/web\"",
     "dev:api": "npm run dev -w @abbasiconnect/api",
+    "dev:admin": "npm run dev:admin -w @abbasiconnect/api",
     "dev:web": "npm run dev -w @abbasiconnect/web",
     "db:generate": "npm run db:generate -w @abbasiconnect/api",
     "db:init": "npm run db:init -w @abbasiconnect/api",
