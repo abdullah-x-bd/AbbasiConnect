@@ -38,8 +38,8 @@ async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
   const header = request.headers.authorization;
   if (!header?.startsWith("Bearer ")) return reply.code(401).send({ error: "Unauthorized admin session" });
   try {
-    const payload = app.jwt.verify<{ scope?: string }>(header.slice(7));
-    if (payload.scope !== "admin") return reply.code(401).send({ error: "Unauthorized admin session" });
+    const payload = app.jwt.verify<{ userId: string; scope?: string }>(header.slice(7));
+    if (payload.scope !== "admin" || payload.userId !== "__admin__") return reply.code(401).send({ error: "Unauthorized admin session" });
   } catch {
     return reply.code(401).send({ error: "Unauthorized admin session" });
   }
@@ -55,7 +55,7 @@ app.post("/admin/api/login", async (request, reply) => {
   if (!safeEqual(body.data.username, adminUsername) || !safeEqual(body.data.password, adminPassword)) {
     return reply.code(401).send({ error: "Incorrect admin credentials" });
   }
-  return { token: app.jwt.sign({ scope: "admin" }, { expiresIn: "8h" }), expiresInHours: 8 };
+  return { token: app.jwt.sign({ userId: "__admin__", scope: "admin" }, { expiresIn: "8h" }), expiresInHours: 8 };
 });
 
 app.get("/admin/api/overview", { preHandler: requireAdmin }, async () => {
