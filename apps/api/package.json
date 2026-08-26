@@ -9,7 +9,7 @@
     "start": "node dist/server.js",
     "db:generate": "prisma generate",
     "db:init": "prisma migrate dev --name init",
-    "db:upgrade": "prisma migrate dev --name account_auth_and_profile",
+    "db:upgrade": "prisma migrate dev --name matrimonial_pivot",
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio"
   },
