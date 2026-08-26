@@ -35,7 +35,7 @@ model User {
   identityName    String?   @db.VarChar(100)
   displayName     String    @db.VarChar(80)
   username        String    @unique @db.VarChar(24)
-  passwordHash    String
+  passwordHash    String?
   email           String?   @unique @db.VarChar(254)
   phone           String?   @unique @db.VarChar(20)
   dateOfBirth     DateTime?
