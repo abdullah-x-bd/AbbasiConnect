@@ -75,7 +75,6 @@ model User {
   contactVerified Boolean   @default(false)
   verificationChannel String? @db.VarChar(24)
 
-  // Aadhaar is optional. It is not required for registration and no card image is stored.
   identityRefHash String?   @unique
   identityLast4   String?
   identityName    String?   @db.VarChar(100)
@@ -94,7 +93,6 @@ model User {
   languages       String    @default("") @db.VarChar(300)
   interests       String    @default("") @db.VarChar(500)
 
-  // Kept for compatibility with the earlier matrimonial prototype.
   profileCreatedBy String   @default("SELF") @db.VarChar(32)
   familyDetails   String    @default("") @db.VarChar(1200)
   preferredMinAge      Int?
@@ -105,6 +103,14 @@ model User {
   preferredEducation   String @default("") @db.VarChar(300)
   preferredOccupation  String @default("") @db.VarChar(300)
   partnerNotes         String @default("") @db.VarChar(1200)
+
+  // Public key plus a password-wrapped private key backup for browser E2EE.
+  // The server never receives the unencrypted private key.
+  e2eePublicKey          String? @db.Text
+  e2eeEncryptedPrivateKey String? @db.Text
+  e2eeKeySalt            String? @db.VarChar(128)
+  e2eeKeyIv              String? @db.VarChar(128)
+  e2eeKeyVersion         Int     @default(1)
 
   isProfileActive   Boolean  @default(true)
   isDirectoryVisible Boolean @default(true)
@@ -125,6 +131,8 @@ model User {
   shortlistsMade      Shortlist[] @relation("shortlistOwner")
   shortlistedBy       Shortlist[] @relation("shortlistTarget")
   posts               Post[]
+  postLikes           PostLike[]
+  comments            PostComment[]
   threadOne           DirectThread[] @relation("threadUserOne")
   threadTwo           DirectThread[] @relation("threadUserTwo")
   messages            Message[]
@@ -241,10 +249,39 @@ model Post {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  author  User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
-  reports Report[]
+  author   User          @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  likes    PostLike[]
+  comments PostComment[]
+  reports  Report[]
 
   @@index([createdAt])
+  @@index([authorId, createdAt])
+}
+
+model PostLike {
+  postId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([postId, userId])
+  @@index([userId, createdAt])
+}
+
+model PostComment {
+  id        String   @id @default(uuid())
+  postId    String
+  authorId  String
+  body      String   @db.VarChar(1000)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  post   Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author User @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([postId, createdAt])
   @@index([authorId, createdAt])
 }
 
@@ -268,7 +305,13 @@ model Message {
   id        String   @id @default(uuid())
   threadId  String
   senderId  String
-  body      String   @db.VarChar(2000)
+  body      String   @default("") @db.VarChar(2000)
+  encrypted Boolean  @default(false)
+  ciphertext String? @db.Text
+  iv         String? @db.VarChar(128)
+  senderKey  String? @db.Text
+  recipientKey String? @db.Text
+  encryptionVersion Int?
   createdAt DateTime @default(now())
   readAt    DateTime?
 
