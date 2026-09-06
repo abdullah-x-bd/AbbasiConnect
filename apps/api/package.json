@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "tsx watch src/server-v2.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/server.js",
+    "start": "node dist/server-v2.js",
     "db:generate": "prisma generate",
     "db:init": "prisma migrate dev --name init",
     "db:upgrade": "prisma migrate dev --name community_platform",
