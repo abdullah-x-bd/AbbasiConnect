@@ -6,14 +6,17 @@ import "./styles.css";
 import "./admin.css";
 
 const TOKEN_KEY = "abbasiconnect_token";
+const baseUrl = import.meta.env.BASE_URL || "/";
+const params = new URLSearchParams(window.location.search);
+const adminRoute = params.get("admin") === "1" || window.location.pathname.endsWith("/admin");
 
 function adminLogout() {
   localStorage.removeItem(TOKEN_KEY);
-  window.location.assign("/");
+  window.location.assign(baseUrl);
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    {window.location.pathname === "/admin" ? <AdminDashboard onLogout={adminLogout} /> : <App />}
+    {adminRoute ? <AdminDashboard onLogout={adminLogout} /> : <App />}
   </React.StrictMode>,
 );
