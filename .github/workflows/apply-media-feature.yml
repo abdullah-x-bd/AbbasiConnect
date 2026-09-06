@@ -1,0 +1,472 @@
+name: Apply media feature
+
+on:
+  push:
+    branches: [feature/post-profile-images]
+    paths:
+      - ".github/workflows/apply-media-feature.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/post-profile-images
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply surgical media changes
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected exactly one match, found {count}")
+              return text.replace(old, new, 1)
+
+          # Prisma: two optional text fields only.
+          schema_path = Path("apps/api/prisma/schema.prisma")
+          schema = schema_path.read_text()
+          schema = replace_once(schema,
+              '  interests       String    @default("") @db.VarChar(500)\n',
+              '  interests       String    @default("") @db.VarChar(500)\n  profileImageData String?   @db.Text\n',
+              "user profile image field")
+          schema = replace_once(schema,
+              '  body      String   @db.VarChar(2500)\n',
+              '  body      String   @db.VarChar(2500)\n  imageData String?   @db.Text\n',
+              "post image field")
+          schema_path.write_text(schema)
+
+          # New authenticated media handler. It reuses the existing Prisma client and internal session endpoint.
+          Path("apps/api/src/media.ts").write_text(r'''import http, { type IncomingMessage, type ServerResponse } from "node:http";
+import { prisma } from "./db.js";
+
+const MAX_BODY_CHARS = 780_000;
+const MAX_IMAGE_CHARS = 700_000;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const IMAGE_DATA = /^data:image\/(?:jpeg|png|webp);base64,[a-z0-9+/=]+$/i;
+
+type CommunityBroadcast = (type: string) => void;
+
+function corsHeaders(webOrigin: string) {
+  return {
+    "access-control-allow-origin": webOrigin,
+    "access-control-allow-headers": "Authorization, Content-Type",
+    "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS",
+    vary: "Origin",
+  };
+}
+
+function sendJson(response: ServerResponse, webOrigin: string, status: number, data: unknown) {
+  response.writeHead(status, { ...corsHeaders(webOrigin), "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+  response.end(JSON.stringify(data));
+}
+
+function internalJson(internalPort: number, path: string, authorization: string | undefined) {
+  return new Promise<{ ok: boolean; data: any }>((resolve) => {
+    const request = http.request({ hostname: "127.0.0.1", port: internalPort, path, method: "GET", headers: authorization ? { authorization } : {} }, (response) => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => { body += chunk; });
+      response.on("end", () => {
+        try { resolve({ ok: (response.statusCode ?? 500) < 300, data: body ? JSON.parse(body) : {} }); }
+        catch { resolve({ ok: false, data: {} }); }
+      });
+    });
+    request.on("error", () => resolve({ ok: false, data: {} }));
+    request.end();
+  });
+}
+
+async function memberId(internalPort: number, authorization: string | undefined) {
+  if (!authorization?.startsWith("Bearer ")) return null;
+  const session = await internalJson(internalPort, "/auth/session", authorization);
+  return session.ok && session.data?.mode === "member" && typeof session.data?.user?.id === "string" ? session.data.user.id : null;
+}
+
+function readJson(request: IncomingMessage) {
+  return new Promise<any>((resolve, reject) => {
+    let body = "";
+    let failed = false;
+    request.setEncoding("utf8");
+    request.on("data", (chunk) => {
+      if (failed) return;
+      body += chunk;
+      if (body.length > MAX_BODY_CHARS) {
+        failed = true;
+        reject(new Error("Image is too large"));
+      }
+    });
+    request.on("end", () => {
+      if (failed) return;
+      try { resolve(body ? JSON.parse(body) : {}); }
+      catch { reject(new Error("Invalid request")); }
+    });
+    request.on("error", reject);
+  });
+}
+
+function validImage(dataUrl: unknown): dataUrl is string {
+  return typeof dataUrl === "string" && dataUrl.length <= MAX_IMAGE_CHARS && IMAGE_DATA.test(dataUrl);
+}
+
+export async function handleMediaRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  internalPort: number,
+  webOrigin: string,
+  broadcast: CommunityBroadcast,
+) {
+  const path = (request.url ?? "").split("?")[0];
+  if (!path.startsWith("/media/")) return false;
+
+  if (request.method === "OPTIONS") {
+    response.writeHead(204, corsHeaders(webOrigin));
+    response.end();
+    return true;
+  }
+
+  const userId = await memberId(internalPort, request.headers.authorization);
+  if (!userId) {
+    sendJson(response, webOrigin, 401, { error: "Member sign-in required" });
+    return true;
+  }
+
+  if (request.method === "PUT" && path === "/media/profile") {
+    try {
+      const payload = await readJson(request);
+      if (!validImage(payload?.dataUrl)) return sendJson(response, webOrigin, 400, { error: "Choose a valid JPG, PNG or WebP image" }), true;
+      await prisma.user.update({ where: { id: userId }, data: { profileImageData: payload.dataUrl } });
+      sendJson(response, webOrigin, 200, { ok: true });
+    } catch (error) {
+      sendJson(response, webOrigin, 400, { error: error instanceof Error ? error.message : "Could not save image" });
+    }
+    return true;
+  }
+
+  if (request.method === "DELETE" && path === "/media/profile") {
+    await prisma.user.update({ where: { id: userId }, data: { profileImageData: null } });
+    sendJson(response, webOrigin, 200, { ok: true });
+    return true;
+  }
+
+  const profileMatch = path.match(/^\/media\/profile\/([^/]+)$/);
+  if (request.method === "GET" && profileMatch) {
+    const id = profileMatch[1];
+    if (!UUID.test(id)) return sendJson(response, webOrigin, 400, { error: "Invalid member" }), true;
+    const user = await prisma.user.findUnique({ where: { id }, select: { profileImageData: true, suspendedAt: true } });
+    if (!user || user.suspendedAt || !user.profileImageData) return sendJson(response, webOrigin, 404, { error: "No profile photo" }), true;
+    sendJson(response, webOrigin, 200, { dataUrl: user.profileImageData });
+    return true;
+  }
+
+  if (request.method === "POST" && path === "/media/posts") {
+    try {
+      const payload = await readJson(request);
+      const text = typeof payload?.body === "string" ? payload.body.trim() : "";
+      if (text.length > 2500) return sendJson(response, webOrigin, 400, { error: "Post is too long" }), true;
+      if (!validImage(payload?.dataUrl)) return sendJson(response, webOrigin, 400, { error: "Choose a valid JPG, PNG or WebP image" }), true;
+      const post = await prisma.post.create({ data: { authorId: userId, body: text, imageData: payload.dataUrl }, select: { id: true, body: true, createdAt: true } });
+      broadcast("community");
+      sendJson(response, webOrigin, 201, { post });
+    } catch (error) {
+      sendJson(response, webOrigin, 400, { error: error instanceof Error ? error.message : "Could not publish image" });
+    }
+    return true;
+  }
+
+  const postMatch = path.match(/^\/media\/posts\/([^/]+)$/);
+  if (request.method === "GET" && postMatch) {
+    const id = postMatch[1];
+    if (!UUID.test(id)) return sendJson(response, webOrigin, 400, { error: "Invalid post" }), true;
+    const post = await prisma.post.findUnique({ where: { id }, select: { imageData: true, author: { select: { suspendedAt: true } } } });
+    if (!post || post.author.suspendedAt || !post.imageData) return sendJson(response, webOrigin, 404, { error: "No post image" }), true;
+    sendJson(response, webOrigin, 200, { dataUrl: post.imageData });
+    return true;
+  }
+
+  sendJson(response, webOrigin, 404, { error: "Media route not found" });
+  return true;
+}
+''')
+
+          # Gateway: route /media/* before ordinary proxying.
+          gateway_path = Path("apps/api/src/gateway.ts")
+          gateway = gateway_path.read_text()
+          gateway = replace_once(gateway,
+              'import http, { type IncomingMessage, type ServerResponse } from "node:http";\n',
+              'import http, { type IncomingMessage, type ServerResponse } from "node:http";\nimport { handleMediaRequest } from "./media.js";\n',
+              "gateway media import")
+          gateway = replace_once(gateway,
+              '  const path = (request.url ?? "").split("?")[0];\n  if (path === "/realtime/events") {',
+              '  const path = (request.url ?? "").split("?")[0];\n  if (path.startsWith("/media/")) {\n    void handleMediaRequest(request, response, internalPort, webOrigin, broadcast);\n    return;\n  }\n  if (path === "/realtime/events") {',
+              "gateway media route")
+          gateway_path.write_text(gateway)
+
+          # UI primitives: authenticated profile/post image loading and browser-side compression.
+          ui_path = Path("apps/web/src/ui.tsx")
+          ui = ui_path.read_text()
+          ui = replace_once(ui,
+              'import { useRef, useState, type ReactNode } from "react";',
+              'import { useEffect, useRef, useState, type ReactNode } from "react";',
+              "ui useEffect import")
+          ui = replace_once(ui,
+              'export type IconName = "home" | "rishte" | "family" | "community" | "messages" | "account" | "logout" | "arrow" | "back" | "search" | "plus" | "check" | "lock" | "heart" | "share" | "send" | "edit" | "shield" | "close";',
+              'export type IconName = "home" | "rishte" | "family" | "community" | "messages" | "account" | "logout" | "arrow" | "back" | "search" | "plus" | "check" | "lock" | "heart" | "share" | "send" | "edit" | "shield" | "close" | "image";',
+              "image icon type")
+          ui = replace_once(ui,
+              '  close: <path d="m6 6 12 12M6 18 18 6"/>,\n};',
+              '  close: <path d="m6 6 12 12M6 18 18 6"/>,\n  image: <><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 15-5-5L5 20"/></>,\n};',
+              "image icon path")
+          old_avatar = '''export function Avatar({ name, small = false }: { name: string; small?: boolean }) {
+  const initials = name.trim().split(/\\s+/).filter(Boolean).slice(0, 2).map(part => Array.from(part)[0]).join("").toLocaleUpperCase();
+  return <span className={`avatar${small ? " avatar-small" : ""}`} aria-hidden="true">{initials || "A"}</span>;
+}
+'''
+          new_avatar = r'''const TOKEN_KEY = "abbasiconnect_token";
+const API_URL = import.meta.env.VITE_API_URL ?? "/api";
+const PROFILE_IMAGE_EVENT = "abbasiconnect:profile-image-updated";
+const profileImageCache = new Map<string, string | null>();
+
+async function mediaImage(path: string) {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (!token) return null;
+  const response = await fetch(`${API_URL}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) return null;
+  const data = await response.json().catch(() => ({}));
+  return typeof data.dataUrl === "string" ? data.dataUrl : null;
+}
+
+export function profileImageUpdated(id: string) {
+  profileImageCache.delete(id);
+  window.dispatchEvent(new CustomEvent(PROFILE_IMAGE_EVENT, { detail: { id, revision: Date.now() } }));
+}
+
+function useProfileImage(id?: string) {
+  const [source, setSource] = useState<string | null>(() => id && profileImageCache.has(id) ? profileImageCache.get(id)! : null);
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    if (!id) return;
+    const refresh = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail?.id === id) setRevision(Number(detail.revision) || Date.now());
+    };
+    window.addEventListener(PROFILE_IMAGE_EVENT, refresh);
+    return () => window.removeEventListener(PROFILE_IMAGE_EVENT, refresh);
+  }, [id]);
+  useEffect(() => {
+    if (!id) { setSource(null); return; }
+    let alive = true;
+    const cached = revision === 0 ? profileImageCache.get(id) : undefined;
+    if (cached !== undefined) { setSource(cached); return; }
+    void mediaImage(`/media/profile/${id}?v=${revision}`).then((value) => {
+      if (!alive) return;
+      profileImageCache.set(id, value);
+      setSource(value);
+    });
+    return () => { alive = false; };
+  }, [id, revision]);
+  return source;
+}
+
+export function Avatar({ name, small = false, id, preview }: { name: string; small?: boolean; id?: string; preview?: string | null }) {
+  const fetched = useProfileImage(id);
+  const [broken, setBroken] = useState(false);
+  const source = preview !== undefined ? preview : fetched;
+  useEffect(() => setBroken(false), [source]);
+  const initials = name.trim().split(/\s+/).filter(Boolean).slice(0, 2).map(part => Array.from(part)[0]).join("").toLocaleUpperCase();
+  return <span className={`avatar${small ? " avatar-small" : ""}`} aria-hidden="true">{source && !broken ? <img src={source} alt="" onError={() => setBroken(true)}/> : initials || "A"}</span>;
+}
+
+export function PostImage({ postId, alt }: { postId: string; alt: string }) {
+  const [source, setSource] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void mediaImage(`/media/posts/${postId}`).then((value) => { if (alive) setSource(value); });
+    return () => { alive = false; };
+  }, [postId]);
+  return source ? <img className="post-image" src={source} alt={alt} loading="lazy"/> : null;
+}
+
+export async function prepareImage(file: File, maxDimension = 1200, startingQuality = .8) {
+  if (!file.type.startsWith("image/")) throw new Error("Choose an image file");
+  if (file.size > 12 * 1024 * 1024) throw new Error("Choose an image smaller than 12 MB");
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error("This image could not be opened"));
+      element.src = objectUrl;
+    });
+    let dimension = maxDimension;
+    let quality = startingQuality;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const scale = Math.min(1, dimension / Math.max(image.naturalWidth, image.naturalHeight));
+      const width = Math.max(1, Math.round(image.naturalWidth * scale));
+      const height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Image processing is unavailable in this browser");
+      context.drawImage(image, 0, 0, width, height);
+      const dataUrl = canvas.toDataURL("image/webp", quality);
+      if (dataUrl.length <= 650_000) return dataUrl;
+      dimension = Math.max(520, Math.round(dimension * .78));
+      quality = Math.max(.56, quality - .08);
+    }
+    throw new Error("This image is still too large after compression. Choose a smaller image.");
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+'''
+          ui = replace_once(ui, old_avatar, new_avatar, "avatar implementation")
+          ui_path.write_text(ui)
+
+          # App: React-native controls for post images and profile photo.
+          app_path = Path("apps/web/src/App.tsx")
+          app = app_path.read_text()
+          app = replace_once(app,
+              'import { Avatar, BrandMark, EmptyState, Icon, LoadingState, Notice, PageHeading, useAction, type IconName } from "./ui";',
+              'import { Avatar, BrandMark, EmptyState, Icon, LoadingState, Notice, PageHeading, PostImage, prepareImage, profileImageUpdated, useAction, type IconName } from "./ui";',
+              "App media imports")
+          app = app.replace('<Avatar name={member.displayName}/>', '<Avatar name={member.displayName} id={member.id}/>')
+          app = app.replace('<Avatar name={member.displayName} small/>', '<Avatar name={member.displayName} id={member.id} small/>')
+          app = app.replace('<Avatar name={me.displayName} small/>', '<Avatar name={me.displayName} id={me.id} small/>')
+          app = app.replace('<Avatar name={item.author.displayName} small/>', '<Avatar name={item.author.displayName} id={item.author.id} small/>')
+
+          app = replace_once(app,
+              '  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});\n',
+              '  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});\n  const [postImage, setPostImage] = useState<string | null>(null);\n',
+              "post image state")
+          app = replace_once(app,
+              '''  async function publish(event: FormEvent) {
+    event.preventDefault();
+    if (!body.trim()) return;
+    await api("/community/posts", { method: "POST", body: JSON.stringify({ body }) });
+    setBody("");
+    await load();
+  }
+''',
+              '''  async function choosePostImage(file?: File) {
+    if (!file) return;
+    setPostImage(await prepareImage(file));
+    setError("");
+  }
+
+  async function publish(event: FormEvent) {
+    event.preventDefault();
+    if (!body.trim() && !postImage) return;
+    if (postImage) await api("/media/posts", { method: "POST", body: JSON.stringify({ body: body.trim(), dataUrl: postImage }) });
+    else await api("/community/posts", { method: "POST", body: JSON.stringify({ body }) });
+    setBody("");
+    setPostImage(null);
+    await load();
+  }
+''',
+              "publish with image")
+          app = replace_once(app,
+              '    const text = `${post.author.displayName}: ${post.body}`;\n',
+              '    const text = post.body ? `${post.author.displayName}: ${post.body}` : `${post.author.displayName} shared a photo on AbbasiConnect.`;\n',
+              "share image post text")
+          old_composer = '<form className="composer" onSubmit={event => { event.preventDefault(); void perform(() => publish(event)); }} aria-busy={working}><div className="composer-header"><Avatar name={me.displayName} id={me.id} small/><strong>What would you like to share?</strong></div><label><span className="sr-only">Write an update</span><textarea rows={3} placeholder="Share a thought or an update with the community…" value={body} onChange={e => setBody(e.target.value)} maxLength={2500}/></label><div className="composer-footer"><small>{body.length} / 2500</small><button disabled={!body.trim() || working}><Icon name="plus"/>{working ? "Please wait…" : "Post update"}</button></div></form>'
+          new_composer = '<form className="composer" onSubmit={event => { event.preventDefault(); void perform(() => publish(event)); }} aria-busy={working}><div className="composer-header"><Avatar name={me.displayName} id={me.id} small/><strong>What would you like to share?</strong></div><label><span className="sr-only">Write an update</span><textarea rows={3} placeholder="Share a thought, an update, or a photo with the community…" value={body} onChange={e => setBody(e.target.value)} maxLength={2500}/></label>{postImage && <div className="composer-image-wrap"><img className="composer-image-preview" src={postImage} alt="Selected post"/><button type="button" className="image-remove" aria-label="Remove selected image" onClick={() => setPostImage(null)}><Icon name="close"/></button></div>}<div className="composer-footer"><div className="composer-media"><label className="image-upload"><Icon name="image"/>Add photo<input type="file" accept="image/jpeg,image/png,image/webp" onChange={e => { const file = e.target.files?.[0]; if (file) void perform(() => choosePostImage(file)); e.target.value = ""; }}/></label><small>{body.length} / 2500</small></div><button disabled={(!body.trim() && !postImage) || working}><Icon name="plus"/>{working ? "Please wait…" : "Post update"}</button></div></form>'
+          app = replace_once(app, old_composer, new_composer, "composer media control")
+          app = replace_once(app,
+              '<div className="post-meta"><MemberLine member={post.author}/><time dateTime={post.createdAt}>{new Date(post.createdAt).toLocaleString()}</time></div><p dir="auto">{post.body}</p>',
+              '<div className="post-meta"><MemberLine member={post.author}/><time dateTime={post.createdAt}>{new Date(post.createdAt).toLocaleString()}</time></div>{post.body && <p dir="auto">{post.body}</p>}<PostImage postId={post.id} alt={`Photo shared by ${post.author.displayName}`}/>',
+              "feed post image")
+
+          marker = 'function Settings({ member, setMember }: { member: Member; setMember: (member: Member) => void }) {'
+          before, settings = app.split(marker, 1)
+          settings = replace_once(settings,
+              '  const { working, perform } = useAction(setError);\n',
+              '  const { working, perform } = useAction(setError);\n  const [profileImage, setProfileImage] = useState<string | null | undefined>(undefined);\n',
+              "profile image state")
+          settings = replace_once(settings,
+              '  async function save(event: FormEvent) {\n',
+              '  async function chooseProfileImage(file?: File) {\n    if (!file) return;\n    setProfileImage(await prepareImage(file, 512, .82));\n    setFeedback("Photo selected. Save changes to apply it.");\n  }\n\n  async function save(event: FormEvent) {\n',
+              "profile image chooser")
+          settings = replace_once(settings,
+              '''    setMember(updated);
+    setError("");
+    setFeedback("Your profile has been saved.");
+''',
+              '''    if (profileImage !== undefined) {
+      if (profileImage) await api("/media/profile", { method: "PUT", body: JSON.stringify({ dataUrl: profileImage }) });
+      else await api("/media/profile", { method: "DELETE" });
+      profileImageUpdated(member.id);
+    }
+    setMember(updated);
+    setProfileImage(undefined);
+    setError("");
+    setFeedback("Your profile has been saved.");
+''',
+              "profile save media")
+          old_identity = '<div className="account-identity"><Avatar name={member.displayName} id={member.id}/><div><h2>{member.displayName}</h2><p>@{member.username}</p></div></div>'
+          new_identity = '<div className="account-identity profile-photo-row"><Avatar name={member.displayName} id={member.id} preview={profileImage}/><div><h2>{member.displayName}</h2><p>@{member.username}</p></div><div className="profile-photo-actions"><label className="image-upload"><Icon name="image"/>Change photo<input type="file" accept="image/jpeg,image/png,image/webp" onChange={e => { const file = e.target.files?.[0]; if (file) void perform(() => chooseProfileImage(file)); e.target.value = ""; }}/></label><button type="button" className="text-button" onClick={() => { setProfileImage(null); setFeedback("Photo will be removed when you save changes."); }}>Remove photo</button></div></div>'
+          settings = replace_once(settings, old_identity, new_identity, "account profile photo controls")
+          app = before + marker + settings
+          app_path.write_text(app)
+
+          # Home account avatar should use the same profile photo.
+          home_path = Path("apps/web/src/Home.tsx")
+          home = home_path.read_text()
+          home = replace_once(home, '<Avatar name={member.displayName} small/>', '<Avatar name={member.displayName} id={member.id} small/>', "home profile avatar")
+          home_path.write_text(home)
+
+          # Dedicated styles, leaving existing stylesheet untouched.
+          Path("apps/web/src/media.css").write_text(r'''.avatar { overflow: hidden; position: relative; }
+.avatar > img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.image-upload { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; color: var(--teal); background: var(--paper); font-size: .875rem; font-weight: 600; cursor: pointer; }
+.image-upload:hover { border-color: #8ca5af; background: #f3f8f9; }
+.image-upload .icon { width: 18px; height: 18px; }
+.image-upload input[type="file"] { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.composer-media { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.composer-image-wrap { position: relative; margin: 4px 0 14px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: #eef3f5; }
+.composer-image-preview { display: block; width: 100%; max-height: 430px; object-fit: contain; }
+.image-remove { position: absolute; top: 10px; right: 10px; width: 38px; min-height: 38px; padding: 8px; border-radius: 999px; background: #152e40d9; color: #fff; }
+.image-remove:hover { background: #152e40; }
+.post-image { display: block; width: 100%; max-height: 680px; margin: 14px 0 4px; border-radius: 11px; object-fit: contain; background: #eef3f5; }
+.profile-photo-row { gap: 16px; flex-wrap: wrap; }
+.profile-photo-row > .avatar { width: 72px; height: 72px; flex: 0 0 72px; font-size: 1.25rem; }
+.profile-photo-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .composer-footer { align-items: flex-end; gap: 10px; }
+  .composer-media { align-items: flex-start; flex-direction: column; gap: 6px; }
+  .profile-photo-actions { width: 100%; margin-left: 0; }
+  .profile-photo-actions .image-upload, .profile-photo-actions button { flex: 1; }
+  .post-image { max-height: 520px; }
+}
+''')
+
+          main_path = Path("apps/web/src/main.tsx")
+          main = main_path.read_text()
+          main = replace_once(main, 'import "./admin.css";\n', 'import "./admin.css";\nimport "./media.css";\n', "media css import")
+          main_path.write_text(main)
+          PY
+      - name: Install dependencies
+        run: npm install
+      - name: Generate Prisma client
+        run: npm run db:generate
+      - name: Build API and web
+        run: npm run build
+      - name: Commit feature and remove temporary workflow
+        shell: bash
+        run: |
+          rm .github/workflows/apply-media-feature.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Add optional images to posts and profiles"
+          git push origin HEAD:feature/post-profile-images
