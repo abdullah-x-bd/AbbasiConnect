@@ -1,9 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import AdminDashboard from "./AdminDashboard";
-import { installFamilyTreeEnhancer } from "./familyTreeEnhancer";
-import { installExperienceEnhancer } from "./experienceEnhancer";
 import { installPerformanceLayer } from "./performance";
 import "./styles.css";
 import "./family-tree.css";
@@ -11,6 +8,7 @@ import "./admin.css";
 import "./polish.css";
 import "./dashboard.css";
 
+const AdminDashboard = React.lazy(() => import("./AdminDashboard"));
 const TOKEN_KEY = "abbasiconnect_token";
 const baseUrl = import.meta.env.BASE_URL || "/";
 const params = new URLSearchParams(window.location.search);
@@ -25,9 +23,20 @@ installPerformanceLayer();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    {adminRoute ? <AdminDashboard onLogout={adminLogout} /> : <App />}
+    {adminRoute ? (
+      <React.Suspense fallback={<main className="center-screen">Opening administration…</main>}>
+        <AdminDashboard onLogout={adminLogout} />
+      </React.Suspense>
+    ) : <App />}
   </React.StrictMode>,
 );
 
-installFamilyTreeEnhancer();
-installExperienceEnhancer();
+if (!adminRoute) {
+  void Promise.all([
+    import("./familyTreeEnhancer"),
+    import("./experienceEnhancer"),
+  ]).then(([familyTree, experience]) => {
+    familyTree.installFamilyTreeEnhancer();
+    experience.installExperienceEnhancer();
+  });
+}
