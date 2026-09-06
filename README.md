@@ -1,315 +1,319 @@
 # AbbasiConnect
 
-AbbasiConnect is a verified, text-only matrimonial platform.
+AbbasiConnect is a text-first community platform built around verified people and family relationships.
 
-It is deliberately designed without matrimonial profile photos, galleries, video, stories, reels, posts, public walls, follower counts, likes, or social-media feeds.
+The current product has four primary modules:
 
-The only image flow in the product is temporary Aadhaar-card input during identity verification. That image is not a matrimonial profile image and is not stored as profile media.
+1. **Rishte**
+2. **Family Tree**
+3. **Community**
+4. **Messages**
 
-## Core product idea
+There are no profile photographs, avatars, galleries or media posts in the current product.
 
-```text
-Register / Sign in
-       |
-       v
-Verified matrimonial profile
-       |
-       +--> Browse text profiles
-       +--> Search and filter
-       +--> Shortlist
-       +--> Send interest
-       +--> Accept / decline
-       +--> Mutual interest
-       +--> Contact details unlocked
-```
+## Product model
 
-## Registration
+A person creates one AbbasiConnect account. That account can participate in the wider community, build and verify family relationships, optionally appear in Rishte, post text updates and privately message other registered members.
 
-```text
-Register
-  -> upload Aadhaar card image
-  -> OCR reads the name
-  -> Aadhaar verification adapter verifies identity
-  -> short-lived registration proof
-  -> create account and matrimonial profile
-```
+### Registration
 
-The account creation form collects:
+Registration currently uses a development OTP adapter.
 
-- display name
-- username
-- password
-- email and/or contact number
-- date of birth
-- gender
-- height
-- marital status
-- education
-- occupation
-- city, state and country
-- languages
-- about text
-- family details
-- interests
-- who created the profile, such as self, parent, family or guardian
+The user enters a phone number or email address, requests an OTP and completes registration with the six-digit code. In development, the OTP is shown directly in the interface. The backend is structured so that this adapter can later be replaced by WhatsApp OTP, SMS OTP or email OTP without changing the account model.
 
-Passwords are stored only as bcrypt hashes.
+Aadhaar is **optional**. It is not required for registration. The optional development Aadhaar route stores only a hash/reference plus optional metadata. No Aadhaar card image is stored.
 
-Each account is linked one-to-one with the verified identity through a unique internal `identityRefHash`.
+### Family Tree
 
-## Sign in
+A registered user can add a relative even if that relative has not registered yet.
 
-Returning users do not repeat Aadhaar onboarding.
+Example:
 
 ```text
-Sign in
-  -> username
-  -> password
-  -> session
+Abdullah adds Hamzah as Brother
+        ↓
+AbbasiConnect creates a family code
+        ↓
+Hamzah later registers
+        ↓
+Hamzah enters that family code
+        ↓
+The family relationship becomes VERIFIED
 ```
 
-## Text-only matrimonial profiles
+Verified family links form a graph rather than isolated profile fields. This means connected relatives can become part of the same extended family network.
 
-A browse card can contain:
+A family link can currently be:
+
+- Parent
+- Child
+- Sibling
+- Spouse
+- Other
+
+Unregistered relatives can remain visible as named nodes in the account owner's family tree until they claim the relationship.
+
+### Family-tree privacy
+
+Family trees are not automatically visible to every registered user.
+
+A member can find another member in the community directory and send a tree-access request. The tree owner can approve or decline the request. Only an approved requester can load that member's connected family graph.
+
+### Rishte
+
+Rishte is opt-in.
+
+A normal account is not automatically listed. A user chooses whether to activate a Rishte profile and can add:
+
+- headline
+- introduction
+- family note
+- what they are looking for
+
+Rishte remains text-only.
+
+Members can send an interest. The recipient can accept or decline it. Mutual interest is tracked separately from general community membership.
+
+### Community
+
+Community is a text-only public board for registered members.
+
+Members can publish text posts and delete their own posts. Media uploads are intentionally not part of the current implementation.
+
+### Messages
+
+Registered members can start private one-to-one message threads with other discoverable community members.
+
+The backend stores threads and messages separately, supports read timestamps and prevents access to threads by non-participants.
+
+## Administration
+
+Members and administrators use the same visible sign-in screen.
+
+Development admin credentials:
 
 ```text
-Name
-@username
-Verified identity
-Age
-Height
-Marital status
-Location
-Education
-Occupation
-Short about section
+username: admin
+password: AbbasiAdmin123!
 ```
 
-There is no profile-photo field or profile-image component.
+An admin credential receives an admin-scoped JWT and is routed to `/admin` inside the same web application. The admin is not represented as a fake community or Rishte profile.
 
-A full profile can additionally contain:
+The current admin overview includes:
 
-- family details
-- languages
-- interests
-- profile-created-by information
-- partner preferences
-- preferred age range
-- preferred height range
-- preferred locations
-- preferred education
-- preferred occupation
-- additional preference notes
+- registered members
+- new registrations
+- active Rishte profiles
+- family links
+- verified family links
+- pending family-tree access requests
+- community posts
+- direct messages
+- Rishte interests
+- reports
 
-## Browse and discovery
+The member-management view also shows contact verification, optional Aadhaar status, Rishte participation, directory visibility, family-link count, post count and message count.
 
-Profiles can be filtered by:
+## Demo users
 
-- text search
-- gender
-- city
-- marital status
-- minimum age
-- maximum age
-
-The backend also supports height filters.
-
-Paused, suspended and blocked profiles are excluded from normal discovery.
-
-## Interests
-
-Instead of following people, users send matrimonial interests.
+Run the seed command to create two connected demo accounts:
 
 ```text
-Profile A -> Send interest -> Profile B
+abdullah_test
+TestUser123!
+
+hamzah_test
+TestUser123!
 ```
 
-The recipient can:
+The seed also creates:
 
-- accept
-- decline
+- a verified sibling relationship between the two users
+- an active Rishte profile for `hamzah_test`
+- a community post
+- a private message thread and demo message
 
-The sender can withdraw a pending interest.
+The seed is idempotent and can be run again safely.
 
-If both sides independently express interest, the existing pending request becomes accepted automatically.
+## Run in GitHub Codespaces
 
-## Mutual interest and contact privacy
+No local Node or Docker installation is required if you use GitHub Codespaces.
 
-Email and phone are private account data.
+Open the repository in a Codespace. The dev container provides Node 22 and Docker.
 
-They are not returned in browse results or normal public profile responses.
-
-Contact details become visible when:
-
-1. the profile is your own account, or
-2. an interest between the two profiles has status `ACCEPTED`
-
-```text
-No mutual interest
-    -> profile details only
-
-Accepted interest
-    -> profile details + email/phone
-```
-
-## Shortlist
-
-Users can privately shortlist profiles for later review.
-
-Shortlisting is not visible to the shortlisted person.
-
-## Safety
-
-The matrimonial pivot keeps:
-
-- block
-- profile reporting
-- moderator/admin roles
-- moderation queue
-- suspend/restore profile actions
-
-Blocking removes outstanding interest and shortlist relationships between the two accounts.
-
-## Data model
-
-The old social models have been removed.
-
-Current primary models:
-
-- `User`
-- `MatchInterest`
-- `Shortlist`
-- `Block`
-- `Report`
-
-Current important enums:
-
-- `UserRole`
-- `MaritalStatus`
-- `InterestStatus`
-- `ReportStatus`
-- `ReportReason`
-
-There are no `Post`, `Like`, or `Follow` models in the matrimonial schema.
-
-## Architecture
-
-```text
-apps/web      React + Vite
-apps/api      Fastify + Prisma + Tesseract OCR
-PostgreSQL    database
-
-Browser -> API -> PostgreSQL
-             |
-             +-> temporary Aadhaar OCR
-             |
-             -> Aadhaar verification adapter
-```
-
-## Local setup
-
-Requirements:
-
-- Node.js 22 LTS recommended
-- npm
-- Docker Desktop
+Then run:
 
 ```bash
-git clone https://github.com/abdullah-x-bd/AbbasiConnect.git
-cd AbbasiConnect
-npm install
-docker compose up -d db
-```
-
-Windows PowerShell:
-
-```powershell
-Copy-Item apps/api/.env.example apps/api/.env
-Copy-Item apps/web/.env.example apps/web/.env
-```
-
-Generate Prisma and create a fresh database:
-
-```bash
-npm run db:generate
-npm run db:init
+npm run demo:setup
 npm run dev
 ```
 
-Open:
+Open forwarded port `5173`.
+
+`demo:setup` performs:
 
 ```text
-http://localhost:5173
+start PostgreSQL
+→ generate Prisma client
+→ push the current schema
+→ seed demo users/data
 ```
 
-## Upgrading an existing development database
-
-The matrimonial pivot removes the old post/follow/like social tables and changes the User model substantially.
-
-For a development database:
+If the Codespace was created before the latest changes, run:
 
 ```bash
 git pull
 npm install
-npm run db:generate
-npm run db:upgrade
+npm run demo:setup
 npm run dev
 ```
 
-Because this is still an early development project, resetting the local database and creating fresh matrimonial test accounts may be simpler if Prisma reports migration conflicts caused by old social test data.
-
-## Development Aadhaar flow
-
-Use a test Aadhaar-like image during local development rather than real identity documents.
-
-The OCR layer reads the image in memory and attempts to extract the name.
-
-The current Aadhaar authentication provider is still simulated using a development reference such as:
+## Architecture
 
 ```text
-DEV-ABBASI-001
+Browser
+  |
+  | port 5173
+  v
+React + Vite web app
+  |
+  | /api proxy
+  v
+Fastify API, port 3001
+  |
+  v
+PostgreSQL
 ```
 
-Live UIDAI/Aadhaar-provider integration remains a later step behind the existing verification adapter.
+The API handles member and admin authentication in one service.
 
-## Current API surface
+Core PostgreSQL models include:
 
 ```text
-GET    /health
-
-POST   /auth/dev-aadhaar/scan
-POST   /auth/dev-aadhaar/verify
-POST   /auth/register
-POST   /auth/sign-in
-GET    /auth/me
-
-PATCH  /profiles/me
-GET    /profiles/browse
-GET    /profiles/:username
-POST   /profiles/:id/interest
-POST   /profiles/:id/shortlist
-DELETE /profiles/:id/shortlist
-POST   /profiles/:id/block
-DELETE /profiles/:id/block
-
-GET    /interests
-PATCH  /interests/:id
-GET    /shortlist
-
-POST   /reports
-GET    /moderation/reports
-PATCH  /moderation/reports/:id
+User
+OtpChallenge
+FamilyLink
+FamilyTreeAccess
+RishteProfile
+MatchInterest
+Post
+DirectThread
+Message
+Block
+Report
 ```
 
-## Intentionally deferred
+## Current API groups
 
-- live UIDAI/Aadhaar authentication provider
-- email OTP verification
-- phone OTP verification
+### Authentication
+
+```text
+POST  /auth/request-otp
+POST  /auth/register
+POST  /auth/sign-in
+GET   /auth/session
+GET   /auth/me
+PATCH /auth/me
+```
+
+### Optional identity
+
+```text
+POST /identity/aadhaar-dev
+```
+
+### Community directory
+
+```text
+GET /directory
+```
+
+### Family
+
+```text
+POST  /family/members
+POST  /family/claim
+GET   /family/me
+POST  /family/access/:targetId
+PATCH /family/access/:id
+GET   /family/tree/:userId
+```
+
+### Rishte
+
+```text
+GET   /rishte
+GET   /rishte/me
+PUT   /rishte/me
+POST  /rishte/:userId/interest
+GET   /rishte/interests
+PATCH /rishte/interests/:id
+```
+
+### Community
+
+```text
+GET    /community/posts
+POST   /community/posts
+DELETE /community/posts/:id
+```
+
+### Messages
+
+```text
+POST /messages/threads/:userId
+GET  /messages/threads
+GET  /messages/threads/:id
+POST /messages/threads/:id/messages
+```
+
+### Administration
+
+```text
+GET   /admin/overview
+GET   /admin/users
+PATCH /admin/users/:id
+GET   /admin/reports
+PATCH /admin/reports/:id
+```
+
+## GitHub hosting versus production hosting
+
+GitHub stores the source code and Codespaces can run the complete stack for development and demonstrations.
+
+A Codespace is not intended to be the permanent public deployment. Multiple testers can use a running shared Codespace URL if port visibility is configured appropriately, but the Codespace can stop and its database belongs to that environment.
+
+For a real always-on multi-user deployment, the same codebase should be deployed with:
+
+- a persistent PostgreSQL service
+- an always-on API/web host
+- production secrets
+- a real OTP provider
+- HTTPS and a custom domain
+
+No architectural rewrite should be required for that transition.
+
+## Production work still required
+
+This repository is a functional development implementation, not a production-ready identity platform.
+
+Before public launch, add or complete:
+
+- real WhatsApp/SMS/email OTP provider
+- OTP rate limits and abuse controls
 - password recovery
-- private messaging after mutual interest
-- notifications
-- deployment
-- mobile clients
+- session revocation and stronger token storage
+- production secret management
+- CSRF strategy if moving auth to cookies
+- security headers
+- audit logging for admin actions
+- database backups
+- data-retention policy
+- privacy policy and consent flows for family data
+- stronger family-link dispute/revocation workflows
+- notification delivery
+- deployment health checks and monitoring
+- automated integration tests against PostgreSQL
+- dependency security remediation
 
-The product is now structurally a matrimonial service, not a social-media network.
+Aadhaar should only be integrated through an appropriate compliant verification flow after the legal, security and provider architecture is finalized.
