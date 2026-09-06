@@ -11,6 +11,7 @@
     "db:init": "prisma migrate dev --name init",
     "db:upgrade": "prisma migrate dev --name community_platform",
     "db:migrate": "prisma migrate dev",
+    "db:push": "prisma db push",
     "db:seed": "tsx src/seed.ts",
     "db:studio": "prisma studio"
   },
