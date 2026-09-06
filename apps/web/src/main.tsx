@@ -6,6 +6,7 @@ import { installFamilyTreeEnhancer } from "./familyTreeEnhancer";
 import "./styles.css";
 import "./family-tree.css";
 import "./admin.css";
+import "./polish.css";
 
 const TOKEN_KEY = "abbasiconnect_token";
 const baseUrl = import.meta.env.BASE_URL || "/";
