@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: abbasiconnect-api
+    runtime: node
+    plan: free
+    branch: main
+    autoDeploy: true
+    buildCommand: npm install && npm run db:generate && npm run db:push && npm run db:seed && npm run build -w @abbasiconnect/api
+    startCommand: npm run start -w @abbasiconnect/api
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 22.23.2
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: WEB_ORIGIN
+        value: https://abdullah-x-bd.github.io
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
