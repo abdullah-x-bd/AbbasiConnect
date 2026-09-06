@@ -3,10 +3,12 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import AdminDashboard from "./AdminDashboard";
 import { installFamilyTreeEnhancer } from "./familyTreeEnhancer";
+import { installExperienceEnhancer } from "./experienceEnhancer";
 import "./styles.css";
 import "./family-tree.css";
 import "./admin.css";
 import "./polish.css";
+import "./dashboard.css";
 
 const TOKEN_KEY = "abbasiconnect_token";
 const baseUrl = import.meta.env.BASE_URL || "/";
@@ -25,3 +27,4 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
 );
 
 installFamilyTreeEnhancer();
+installExperienceEnhancer();
