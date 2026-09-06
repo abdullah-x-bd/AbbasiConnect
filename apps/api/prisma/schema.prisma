@@ -21,6 +21,27 @@ enum MaritalStatus {
   SEPARATED
 }
 
+enum FamilyRelation {
+  PARENT
+  CHILD
+  SIBLING
+  SPOUSE
+  OTHER
+}
+
+enum FamilyLinkStatus {
+  INVITED
+  VERIFIED
+  DECLINED
+}
+
+enum AccessStatus {
+  PENDING
+  APPROVED
+  DECLINED
+  REVOKED
+}
+
 enum InterestStatus {
   PENDING
   ACCEPTED
@@ -46,31 +67,36 @@ enum ReportReason {
 
 model User {
   id              String    @id @default(uuid())
-  identityRefHash String    @unique
-  identityLast4   String?
-  identityName    String?   @db.VarChar(100)
-
   displayName     String    @db.VarChar(80)
   username        String    @unique @db.VarChar(24)
   passwordHash    String?
   email           String?   @unique @db.VarChar(254)
   phone           String?   @unique @db.VarChar(20)
+  contactVerified Boolean   @default(false)
+  verificationChannel String? @db.VarChar(24)
+
+  // Aadhaar is optional. It is not required for registration and no card image is stored.
+  identityRefHash String?   @unique
+  identityLast4   String?
+  identityName    String?   @db.VarChar(100)
+  aadhaarVerifiedAt DateTime?
+
   dateOfBirth     DateTime?
   gender          String?   @db.VarChar(32)
   city            String?   @db.VarChar(80)
   state           String?   @db.VarChar(80)
   country         String    @default("India") @db.VarChar(80)
-
   heightCm        Int?
   maritalStatus   MaritalStatus?
   education       String    @default("") @db.VarChar(180)
   occupation      String    @default("") @db.VarChar(180)
-  profileCreatedBy String   @default("SELF") @db.VarChar(32)
   about           String    @default("") @db.VarChar(1500)
-  familyDetails   String    @default("") @db.VarChar(1200)
   languages       String    @default("") @db.VarChar(300)
   interests       String    @default("") @db.VarChar(500)
 
+  // Kept for compatibility with the earlier matrimonial prototype.
+  profileCreatedBy String   @default("SELF") @db.VarChar(32)
+  familyDetails   String    @default("") @db.VarChar(1200)
   preferredMinAge      Int?
   preferredMaxAge      Int?
   preferredMinHeightCm Int?
@@ -80,26 +106,103 @@ model User {
   preferredOccupation  String @default("") @db.VarChar(300)
   partnerNotes         String @default("") @db.VarChar(1200)
 
-  isProfileActive Boolean   @default(true)
-  role            UserRole  @default(MEMBER)
-  verifiedAt      DateTime  @default(now())
-  suspendedAt     DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  isProfileActive   Boolean  @default(true)
+  isDirectoryVisible Boolean @default(true)
+  role              UserRole @default(MEMBER)
+  verifiedAt        DateTime @default(now())
+  suspendedAt       DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
-  interestsSent     MatchInterest[] @relation("interestSender")
-  interestsReceived MatchInterest[] @relation("interestReceiver")
-  shortlistsMade    Shortlist[]     @relation("shortlistOwner")
-  shortlistedBy     Shortlist[]     @relation("shortlistTarget")
-  blocksMade        Block[]         @relation("blocker")
-  blocksReceived    Block[]         @relation("blocked")
-  reportsMade       Report[]        @relation("reporter")
-  reportsAgainst    Report[]        @relation("reportedUser")
-  reportsReviewed   Report[]        @relation("reviewedBy")
+  otpChallenges       OtpChallenge[]
+  familyLinksCreated  FamilyLink[] @relation("familyOwner")
+  familyLinksClaimed  FamilyLink[] @relation("familyRelative")
+  treeRequestsSent    FamilyTreeAccess[] @relation("treeRequester")
+  treeRequestsReceived FamilyTreeAccess[] @relation("treeTarget")
+  rishteProfile       RishteProfile?
+  interestsSent       MatchInterest[] @relation("interestSender")
+  interestsReceived   MatchInterest[] @relation("interestReceiver")
+  shortlistsMade      Shortlist[] @relation("shortlistOwner")
+  shortlistedBy       Shortlist[] @relation("shortlistTarget")
+  posts               Post[]
+  threadOne           DirectThread[] @relation("threadUserOne")
+  threadTwo           DirectThread[] @relation("threadUserTwo")
+  messages            Message[]
+  blocksMade          Block[] @relation("blocker")
+  blocksReceived      Block[] @relation("blocked")
+  reportsMade         Report[] @relation("reporter")
+  reportsAgainst      Report[] @relation("reportedUser")
+  reportsReviewed     Report[] @relation("reviewedBy")
 
   @@index([gender, isProfileActive, suspendedAt])
   @@index([city, state])
   @@index([dateOfBirth])
+}
+
+model OtpChallenge {
+  id        String   @id @default(uuid())
+  userId    String?
+  contact   String   @db.VarChar(254)
+  channel   String   @db.VarChar(24)
+  codeHash  String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([contact, createdAt])
+}
+
+model FamilyLink {
+  id             String           @id @default(uuid())
+  ownerId        String
+  relativeUserId String?
+  relativeName   String           @db.VarChar(100)
+  relation       FamilyRelation
+  relationLabel  String           @default("") @db.VarChar(80)
+  inviteCode     String           @unique @db.VarChar(16)
+  status         FamilyLinkStatus @default(INVITED)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  owner        User  @relation("familyOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  relativeUser User? @relation("familyRelative", fields: [relativeUserId], references: [id], onDelete: SetNull)
+
+  @@index([ownerId, status])
+  @@index([relativeUserId, status])
+}
+
+model FamilyTreeAccess {
+  id          String       @id @default(uuid())
+  requesterId String
+  targetId    String
+  status      AccessStatus @default(PENDING)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  requester User @relation("treeRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  target    User @relation("treeTarget", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, targetId])
+  @@index([targetId, status])
+}
+
+model RishteProfile {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  isActive     Boolean  @default(false)
+  headline     String   @default("") @db.VarChar(180)
+  bio          String   @default("") @db.VarChar(1500)
+  familyNote   String   @default("") @db.VarChar(1000)
+  lookingFor   String   @default("") @db.VarChar(1000)
+  contactRoute String   @default("THROUGH_APP") @db.VarChar(40)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([isActive, updatedAt])
 }
 
 model MatchInterest {
@@ -131,6 +234,51 @@ model Shortlist {
   @@index([targetId])
 }
 
+model Post {
+  id        String   @id @default(uuid())
+  authorId  String
+  body      String   @db.VarChar(2500)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  author  User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  reports Report[]
+
+  @@index([createdAt])
+  @@index([authorId, createdAt])
+}
+
+model DirectThread {
+  id        String   @id @default(uuid())
+  userOneId String
+  userTwoId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userOne User @relation("threadUserOne", fields: [userOneId], references: [id], onDelete: Cascade)
+  userTwo User @relation("threadUserTwo", fields: [userTwoId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@unique([userOneId, userTwoId])
+  @@index([userOneId, updatedAt])
+  @@index([userTwoId, updatedAt])
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  threadId  String
+  senderId  String
+  body      String   @db.VarChar(2000)
+  createdAt DateTime @default(now())
+  readAt    DateTime?
+
+  thread DirectThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([threadId, createdAt])
+  @@index([senderId, createdAt])
+}
+
 model Block {
   blockerId String
   blockedId String
@@ -146,7 +294,8 @@ model Block {
 model Report {
   id             String       @id @default(uuid())
   reporterId     String
-  reportedUserId String
+  reportedUserId String?
+  postId          String?
   reason         ReportReason
   details        String       @default("") @db.VarChar(1000)
   status         ReportStatus @default(OPEN)
@@ -156,10 +305,12 @@ model Report {
   updatedAt      DateTime     @updatedAt
 
   reporter     User  @relation("reporter", fields: [reporterId], references: [id], onDelete: Cascade)
-  reportedUser User  @relation("reportedUser", fields: [reportedUserId], references: [id], onDelete: Cascade)
+  reportedUser User? @relation("reportedUser", fields: [reportedUserId], references: [id], onDelete: Cascade)
+  post         Post? @relation(fields: [postId], references: [id], onDelete: Cascade)
   reviewedBy   User? @relation("reviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
 
   @@index([status, createdAt])
   @@index([reporterId])
   @@index([reportedUserId])
+  @@index([postId])
 }
