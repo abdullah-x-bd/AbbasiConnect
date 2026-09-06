@@ -14,6 +14,10 @@ permissions:
 jobs:
   apply:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://abbasi:abbasi_dev_password@localhost:5432/abbasiconnect?schema=public
+      JWT_SECRET: ci-only-secret
+      WEB_ORIGIN: http://localhost:5173
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,29 +31,10 @@ jobs:
       - name: Install dependencies
         run: npm install
       - name: Generate Prisma client
-        id: prisma
-        shell: bash
-        run: |
-          set +e
-          npm run db:generate > prisma-output.txt 2>&1
-          code=$?
-          cat prisma-output.txt
-          echo "code=$code" >> "$GITHUB_OUTPUT"
-          exit 0
-      - name: Preserve Prisma error for inspection
-        if: steps.prisma.outputs.code != '0'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add prisma-output.txt
-          git commit -m "Capture media feature Prisma error"
-          git push origin HEAD:feature/post-profile-images
-          exit 1
+        run: npm run db:generate
       - name: Build API and web
-        if: steps.prisma.outputs.code == '0'
         run: npm run build
       - name: Commit verified feature
-        if: steps.prisma.outputs.code == '0'
         run: |
           rm .github/workflows/apply-media-feature.yml scripts/apply-media-feature.py prisma-output.txt
           git config user.name "github-actions[bot]"
