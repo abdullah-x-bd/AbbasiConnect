@@ -29,7 +29,7 @@ export function Icon({ name, className = "" }: { name: IconName; className?: str
 }
 
 export function BrandMark() {
-  return <svg className="brand-mark" viewBox="0 0 36 36" fill="none" aria-hidden="true"><path d="M8 27V15a10 10 0 0 1 20 0v12M8 21h20M18 10v17" stroke="currentColor" strokeWidth="2"/><circle cx="8" cy="27" r="3" fill="currentColor"/><circle cx="28" cy="27" r="3" fill="currentColor"/><circle cx="18" cy="10" r="3" fill="currentColor"/></svg>;
+  return <svg className="brand-mark" viewBox="0 0 36 36" fill="none" aria-hidden="true"><rect x="5.5" y="5.5" width="25" height="25" rx="7" stroke="currentColor" strokeWidth="2"/><path d="M11 25 18 10l7 15M14 20h8" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/></svg>;
 }
 
 export function Avatar({ name, small = false }: { name: string; small?: boolean }) {
