@@ -58,7 +58,7 @@ function isApiRequest(url: string) {
 }
 
 function isCacheablePath(path: string) {
-  if (path.endsWith("/realtime/events")) return false;
+  if (path.endsWith("/realtime/events") || path.endsWith("/performance/bootstrap")) return false;
   if (path.includes("/auth/session") || path.includes("/auth/sign-in") || path.includes("/auth/register")) return false;
   if (path.includes("/auth/request-otp")) return false;
   return true;
@@ -113,18 +113,17 @@ function readCachedSession(authorization: string | null) {
   }
 }
 
-function storeCachedSession(response: Response, authorization?: string | null) {
-  if (!response.ok) return;
-  void response.clone().text().then((body) => {
-    try {
-      const data = JSON.parse(body);
-      if (data?.mode !== "member" || !data?.user?.id) return;
-      const auth = authorization || (localStorage.getItem(TOKEN_KEY) ? `Bearer ${localStorage.getItem(TOKEN_KEY)}` : "");
-      localStorage.setItem(SESSION_CACHE_KEY, JSON.stringify({ tokenTail: tokenTail(auth), body, storedAt: Date.now() } satisfies CachedSession));
-    } catch {
-      // Session caching is only a rendering optimization.
-    }
-  });
+function storeSessionBody(body: string, authorization?: string | null, explicitToken?: string | null) {
+  try {
+    const data = JSON.parse(body);
+    if (data?.mode !== "member" || !data?.user?.id) return;
+    const auth = explicitToken
+      ? `Bearer ${explicitToken}`
+      : authorization || (localStorage.getItem(TOKEN_KEY) ? `Bearer ${localStorage.getItem(TOKEN_KEY)}` : "");
+    localStorage.setItem(SESSION_CACHE_KEY, JSON.stringify({ tokenTail: tokenTail(auth), body, storedAt: Date.now() } satisfies CachedSession));
+  } catch {
+    // Session caching is only a rendering optimization.
+  }
 }
 
 function domainForPath(path: string) {
@@ -173,6 +172,33 @@ async function fetchSnapshot(input: RequestInfo | URL, init: RequestInit | undef
   return request;
 }
 
+function seedCache(path: string, data: any, token: string) {
+  if (data === undefined || data === null) return;
+  const url = `${API_URL}${path}`;
+  const headers = new Headers({ Authorization: `Bearer ${token}` });
+  cache.set(cacheKey(url, headers), {
+    body: JSON.stringify(data),
+    status: 200,
+    statusText: "OK",
+    headers: [["content-type", "application/json"]],
+    storedAt: Date.now(),
+  });
+}
+
+function fallbackWarm(token: string, userId?: string) {
+  const headers = { Authorization: `Bearer ${token}` };
+  const paths = [
+    "/community/feed",
+    "/messages-secure/threads",
+    "/family/me",
+    "/rishte/me",
+    "/rishte",
+    "/rishte/interests",
+  ];
+  if (userId) paths.push(`/family/tree/${userId}`);
+  for (const path of paths) void window.fetch(`${API_URL}${path}`, { headers }).catch(() => undefined);
+}
+
 function scheduleWarm(userId?: string) {
   if (warmTimer !== null) window.clearTimeout(warmTimer);
   warmTimer = window.setTimeout(() => {
@@ -180,30 +206,33 @@ function scheduleWarm(userId?: string) {
     const token = localStorage.getItem(TOKEN_KEY);
     if (!token) return;
 
-    const headers = { Authorization: `Bearer ${token}` };
-    const first = [
-      "/community/feed",
-      "/messages-secure/threads",
-      "/family/me",
-      "/rishte/me",
-    ];
-    for (const path of first) void window.fetch(`${API_URL}${path}`, { headers }).catch(() => undefined);
-
-    window.setTimeout(() => {
+    void nativeFetch(`${API_URL}/performance/bootstrap`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    }).then(async (response) => {
+      if (!response.ok) throw new Error("Bootstrap unavailable");
+      const data = await response.json();
       if (localStorage.getItem(TOKEN_KEY) !== token) return;
-      const second = ["/rishte", "/rishte/interests"];
-      if (userId) second.push(`/family/tree/${userId}`);
-      for (const path of second) void window.fetch(`${API_URL}${path}`, { headers }).catch(() => undefined);
-    }, 350);
-  }, 80);
+      const id = data.userId || userId;
+      seedCache("/community/feed", data.communityFeed, token);
+      seedCache("/messages-secure/threads", data.messageThreads, token);
+      seedCache("/family/me", data.family, token);
+      seedCache("/rishte/me", data.rishteMine, token);
+      seedCache("/rishte", data.rishteProfiles, token);
+      seedCache("/rishte/interests", data.rishteInterests, token);
+      if (id) seedCache(`/family/tree/${id}`, data.familyTree, token);
+    }).catch(() => fallbackWarm(token, userId));
+  }, 40);
 }
 
 async function maybeWarmFromAuth(response: Response, path: string, authorization?: string | null) {
   if (!response.ok || (!path.includes("/auth/session") && !path.includes("/auth/sign-in") && !path.includes("/auth/register"))) return;
-  storeCachedSession(response, authorization);
   try {
-    const data = await response.clone().json();
-    if (data?.mode === "member") scheduleWarm(data.user?.id);
+    const body = await response.clone().text();
+    const data = JSON.parse(body);
+    if (data?.mode !== "member") return;
+    storeSessionBody(body, authorization, data.token || null);
+    scheduleWarm(data.user?.id);
   } catch {
     // Prefetching is opportunistic; auth itself should never depend on it.
   }
