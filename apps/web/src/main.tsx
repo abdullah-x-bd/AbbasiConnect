@@ -4,6 +4,7 @@ import App from "./App";
 import AdminDashboard from "./AdminDashboard";
 import { installFamilyTreeEnhancer } from "./familyTreeEnhancer";
 import { installExperienceEnhancer } from "./experienceEnhancer";
+import { installPerformanceLayer } from "./performance";
 import "./styles.css";
 import "./family-tree.css";
 import "./admin.css";
@@ -19,6 +20,8 @@ function adminLogout() {
   localStorage.removeItem(TOKEN_KEY);
   window.location.assign(baseUrl);
 }
+
+installPerformanceLayer();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
