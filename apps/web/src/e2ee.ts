@@ -19,14 +19,20 @@ function bytesToBase64(bytes: ArrayBuffer | Uint8Array) {
   return btoa(binary);
 }
 
-function base64ToBytes(value: string) {
+function base64ToBuffer(value: string): ArrayBuffer {
   const binary = atob(value);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return bytes;
+  return bytes.buffer;
 }
 
-async function deriveWrappingKey(password: string, salt: Uint8Array) {
+function randomBuffer(length: number): ArrayBuffer {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return bytes.buffer;
+}
+
+async function deriveWrappingKey(password: string, salt: ArrayBuffer) {
   const material = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveKey"]);
   return crypto.subtle.deriveKey(
     { name: "PBKDF2", salt, iterations: 210000, hash: "SHA-256" },
@@ -45,8 +51,8 @@ async function createIdentity(password: string) {
   );
   const publicJwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
   const privateJwk = await crypto.subtle.exportKey("jwk", pair.privateKey);
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const salt = randomBuffer(16);
+  const iv = randomBuffer(12);
   const wrappingKey = await deriveWrappingKey(password, salt);
   const encryptedPrivate = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
@@ -65,14 +71,14 @@ async function createIdentity(password: string) {
 
 async function unwrapPrivateKey(bundle: KeyBundle, password: string) {
   if (!bundle.encryptedPrivateKey || !bundle.salt || !bundle.iv) throw new Error("Secure messaging key is incomplete");
-  const salt = base64ToBytes(bundle.salt);
-  const iv = base64ToBytes(bundle.iv);
+  const salt = base64ToBuffer(bundle.salt);
+  const iv = base64ToBuffer(bundle.iv);
   const wrappingKey = await deriveWrappingKey(password, salt);
   try {
     const plain = await crypto.subtle.decrypt(
       { name: "AES-GCM", iv },
       wrappingKey,
-      base64ToBytes(bundle.encryptedPrivateKey),
+      base64ToBuffer(bundle.encryptedPrivateKey),
     );
     return new TextDecoder().decode(plain);
   } catch {
@@ -144,7 +150,7 @@ async function importPrivateKey(privateKey: string) {
 
 export async function encryptMessage(text: string, senderPublicKey: string, recipientPublicKey: string) {
   const aes = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const iv = randomBuffer(12);
   const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, aes, new TextEncoder().encode(text));
   const rawAes = await crypto.subtle.exportKey("raw", aes);
   const [senderPublic, recipientPublic] = await Promise.all([importPublicKey(senderPublicKey), importPublicKey(recipientPublicKey)]);
@@ -167,8 +173,8 @@ export async function decryptMessage(message: any, userId: string) {
   if (!privateJwk) throw new Error("Secure messages are locked");
   if (!message.wrappedKey || !message.ciphertext || !message.iv) throw new Error("Encrypted message is incomplete");
   const privateKey = await importPrivateKey(privateJwk);
-  const rawAes = await crypto.subtle.decrypt({ name: "RSA-OAEP" }, privateKey, base64ToBytes(message.wrappedKey));
+  const rawAes = await crypto.subtle.decrypt({ name: "RSA-OAEP" }, privateKey, base64ToBuffer(message.wrappedKey));
   const aes = await crypto.subtle.importKey("raw", rawAes, { name: "AES-GCM" }, false, ["decrypt"]);
-  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: base64ToBytes(message.iv) }, aes, base64ToBytes(message.ciphertext));
+  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: base64ToBuffer(message.iv) }, aes, base64ToBuffer(message.ciphertext));
   return new TextDecoder().decode(plain);
 }
