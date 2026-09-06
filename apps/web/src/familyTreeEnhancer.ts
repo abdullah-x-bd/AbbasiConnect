@@ -239,7 +239,22 @@ function enhancePanel(panel: HTMLElement) {
     card.style.top = `${point.y}px`;
     card.style.width = `${nodeWidth}px`;
     card.style.height = `${nodeHeight}px`;
-    card.innerHTML = `<strong>${person.name}</strong><small>${person.meta || (person.guest ? "Not registered" : "Registered member")}</small>${person.id === rootId ? '<span class="you-badge">You</span>' : ""}`;
+
+    const name = document.createElement("strong");
+    name.textContent = person.name;
+    card.appendChild(name);
+
+    const meta = document.createElement("small");
+    meta.textContent = person.meta || (person.guest ? "Not registered" : "Registered member");
+    card.appendChild(meta);
+
+    if (person.id === rootId) {
+      const badge = document.createElement("span");
+      badge.className = "you-badge";
+      badge.textContent = "You";
+      card.appendChild(badge);
+    }
+
     card.addEventListener("click", () => {
       stage.querySelectorAll(".genealogy-person.selected").forEach((item) => item.classList.remove("selected"));
       card.classList.add("selected");
@@ -252,7 +267,19 @@ function enhancePanel(panel: HTMLElement) {
 
   const legend = document.createElement("div");
   legend.className = "genealogy-legend";
-  legend.innerHTML = "<span><i class=\"legend-branch\"></i> siblings</span><span><i class=\"legend-vertical\"></i> parent / child</span><span><i class=\"legend-spouse\"></i> spouses</span>";
+  const legendItems = [
+    ["legend-branch", "siblings"],
+    ["legend-vertical", "parent / child"],
+    ["legend-spouse", "spouses"],
+  ];
+  for (const [lineClass, label] of legendItems) {
+    const item = document.createElement("span");
+    const marker = document.createElement("i");
+    marker.className = lineClass;
+    item.appendChild(marker);
+    item.append(document.createTextNode(label));
+    legend.appendChild(item);
+  }
   canvas.appendChild(legend);
 
   panel.classList.add("genealogy-enhanced");
