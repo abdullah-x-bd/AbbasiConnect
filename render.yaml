@@ -4,7 +4,14 @@ services:
     runtime: node
     plan: free
     branch: main
-    autoDeploy: true
+    autoDeployTrigger: commit
+    buildFilter:
+      paths:
+        - apps/api/**
+        - package.json
+        - package-lock.json
+        - render.yaml
+      ignoredPaths: []
     buildCommand: npm install && npm run db:generate && npm run db:push && npm run db:seed && npm run build -w @abbasiconnect/api
     startCommand: npm run start -w @abbasiconnect/api
     healthCheckPath: /health
