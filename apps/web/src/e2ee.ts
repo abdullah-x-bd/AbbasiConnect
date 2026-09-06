@@ -9,10 +9,21 @@ type KeyBundle = {
   version?: number;
 };
 
+type StoredDeviceIdentity = {
+  userId: string;
+  privateKey: CryptoKey;
+  publicKey?: string;
+  encryptedPrivateKey?: string;
+  salt?: string;
+  iv?: string;
+  version?: number;
+  savedAt: number;
+};
+
 const PUBLIC_PREFIX = "abbasiconnect_e2ee_public_";
 const DEVICE_READY_PREFIX = "abbasiconnect_e2ee_device_ready_";
 const LEGACY_PRIVATE_PREFIX = "abbasiconnect_e2ee_private_";
-const DB_NAME = "abbasiconnect-crypto";
+const DB_NAME = "abbasiconnect-crypto-v2";
 const DB_VERSION = 1;
 const STORE_NAME = "device-keys";
 
@@ -48,20 +59,21 @@ function openCryptoDb(): Promise<IDBDatabase> {
   });
 }
 
-async function storeDevicePrivateKey(userId: string, privateKey: CryptoKey) {
+async function storeDeviceIdentity(identity: StoredDeviceIdentity) {
   const db = await openCryptoDb();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, "readwrite");
-    tx.objectStore(STORE_NAME).put({ userId, privateKey, savedAt: Date.now() });
+    tx.objectStore(STORE_NAME).put(identity);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error ?? new Error("Could not save secure device key"));
     tx.onabort = () => reject(tx.error ?? new Error("Could not save secure device key"));
   });
   db.close();
-  localStorage.setItem(`${DEVICE_READY_PREFIX}${userId}`, "1");
+  localStorage.setItem(`${DEVICE_READY_PREFIX}${identity.userId}`, "1");
+  if (identity.publicKey) localStorage.setItem(`${PUBLIC_PREFIX}${identity.userId}`, identity.publicKey);
 }
 
-async function readDevicePrivateKey(userId: string): Promise<CryptoKey | null> {
+async function readDeviceIdentity(userId: string): Promise<StoredDeviceIdentity | null> {
   const db = await openCryptoDb();
   const value = await new Promise<any>((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, "readonly");
@@ -70,7 +82,8 @@ async function readDevicePrivateKey(userId: string): Promise<CryptoKey | null> {
     request.onerror = () => reject(request.error ?? new Error("Could not read secure device key"));
   });
   db.close();
-  return value?.privateKey instanceof CryptoKey ? value.privateKey : null;
+  if (!value?.privateKey) return null;
+  return value as StoredDeviceIdentity;
 }
 
 async function deriveWrappingKey(password: string, salt: ArrayBuffer) {
@@ -136,41 +149,7 @@ async function unwrapPrivateKey(bundle: KeyBundle, password: string) {
   }
 }
 
-async function migrateLegacySessionKey(userId: string) {
-  const legacy = sessionStorage.getItem(`${LEGACY_PRIVATE_PREFIX}${userId}`);
-  if (!legacy) return null;
-  const privateKey = await importPrivateJwk(legacy);
-  await storeDevicePrivateKey(userId, privateKey);
-  sessionStorage.removeItem(`${LEGACY_PRIVATE_PREFIX}${userId}`);
-  return privateKey;
-}
-
-export async function prepareSecureMessaging(api: ApiFn, password: string, userId: string) {
-  const existing = await readDevicePrivateKey(userId).catch(() => null);
-  if (existing) {
-    localStorage.setItem(`${DEVICE_READY_PREFIX}${userId}`, "1");
-    const bundle: KeyBundle = await api("/crypto/me");
-    if (bundle.publicKey) localStorage.setItem(`${PUBLIC_PREFIX}${userId}`, bundle.publicKey);
-    return { ready: true, created: false, trustedDevice: true };
-  }
-
-  const migrated = await migrateLegacySessionKey(userId).catch(() => null);
-  if (migrated) {
-    const bundle: KeyBundle = await api("/crypto/me");
-    if (bundle.publicKey) localStorage.setItem(`${PUBLIC_PREFIX}${userId}`, bundle.publicKey);
-    return { ready: true, created: false, trustedDevice: true };
-  }
-
-  const bundle: KeyBundle = await api("/crypto/me");
-  if (bundle.configured) {
-    const privateJwk = await unwrapPrivateKey(bundle, password);
-    const privateKey = await importPrivateJwk(privateJwk);
-    await storeDevicePrivateKey(userId, privateKey);
-    if (bundle.publicKey) localStorage.setItem(`${PUBLIC_PREFIX}${userId}`, bundle.publicKey);
-    return { ready: true, created: false, trustedDevice: true };
-  }
-
-  const identity = await createIdentity(password);
+async function uploadBundle(api: ApiFn, identity: { publicKey: string; encryptedPrivateKey: string; salt: string; iv: string; version: number }) {
   await api("/crypto/me", {
     method: "PUT",
     body: JSON.stringify({
@@ -181,21 +160,107 @@ export async function prepareSecureMessaging(api: ApiFn, password: string, userI
       version: identity.version,
     }),
   });
-  await storeDevicePrivateKey(userId, await importPrivateJwk(identity.privateJwk));
-  localStorage.setItem(`${PUBLIC_PREFIX}${userId}`, identity.publicKey);
+}
+
+async function installFreshIdentity(api: ApiFn, password: string, userId: string) {
+  const identity = await createIdentity(password);
+  const privateKey = await importPrivateJwk(identity.privateJwk);
+
+  // Save the full recovery payload locally before publishing it. If the network
+  // request fails, the next normal sign-in can safely retry the same key bundle.
+  await storeDeviceIdentity({
+    userId,
+    privateKey,
+    publicKey: identity.publicKey,
+    encryptedPrivateKey: identity.encryptedPrivateKey,
+    salt: identity.salt,
+    iv: identity.iv,
+    version: identity.version,
+    savedAt: Date.now(),
+  });
+  await uploadBundle(api, identity);
   return { ready: true, created: true, trustedDevice: true };
 }
 
-// Retained for compatibility with older UI code. Normal login now provisions the device,
-// so the Messages screen should never require a second password entry.
+async function migrateLegacySessionKey(userId: string) {
+  const legacy = sessionStorage.getItem(`${LEGACY_PRIVATE_PREFIX}${userId}`);
+  if (!legacy) return null;
+  const privateKey = await importPrivateJwk(legacy);
+  sessionStorage.removeItem(`${LEGACY_PRIVATE_PREFIX}${userId}`);
+  return privateKey;
+}
+
+export async function prepareSecureMessaging(api: ApiFn, password: string, userId: string) {
+  const [bundle, stored] = await Promise.all([
+    api("/crypto/me") as Promise<KeyBundle>,
+    readDeviceIdentity(userId).catch(() => null),
+  ]);
+
+  // A fully matching trusted device is already ready.
+  if (stored?.publicKey && bundle.publicKey && stored.publicKey === bundle.publicKey) {
+    localStorage.setItem(`${DEVICE_READY_PREFIX}${userId}`, "1");
+    localStorage.setItem(`${PUBLIC_PREFIX}${userId}`, bundle.publicKey);
+    return { ready: true, created: false, trustedDevice: true };
+  }
+
+  // A previous publication may have failed after the browser saved its key.
+  // Retry the exact same key bundle rather than generating a different identity.
+  if (!bundle.publicKey && stored?.publicKey && stored.encryptedPrivateKey && stored.salt && stored.iv && stored.version) {
+    await uploadBundle(api, {
+      publicKey: stored.publicKey,
+      encryptedPrivateKey: stored.encryptedPrivateKey,
+      salt: stored.salt,
+      iv: stored.iv,
+      version: stored.version,
+    });
+    localStorage.setItem(`${PUBLIC_PREFIX}${userId}`, stored.publicKey);
+    return { ready: true, created: false, trustedDevice: true, repaired: true };
+  }
+
+  if (bundle.configured && bundle.publicKey) {
+    try {
+      const privateJwk = await unwrapPrivateKey(bundle, password);
+      const privateKey = await importPrivateJwk(privateJwk);
+      await storeDeviceIdentity({
+        userId,
+        privateKey,
+        publicKey: bundle.publicKey,
+        encryptedPrivateKey: bundle.encryptedPrivateKey || undefined,
+        salt: bundle.salt || undefined,
+        iv: bundle.iv || undefined,
+        version: bundle.version || 1,
+        savedAt: Date.now(),
+      });
+      return { ready: true, created: false, trustedDevice: true };
+    } catch (error) {
+      // The two seeded demo accounts had their passwords renamed during development.
+      // They contain only the original unencrypted demo message, so rotating their
+      // test encryption identity is safe and prevents the old password wrapping from
+      // permanently blocking secure setup.
+      const me = await api("/auth/me").catch(() => null);
+      if (me?.username === "user1" || me?.username === "user2") {
+        return installFreshIdentity(api, password, userId);
+      }
+      throw error;
+    }
+  }
+
+  const legacy = await migrateLegacySessionKey(userId).catch(() => null);
+  if (legacy && bundle.publicKey) {
+    await storeDeviceIdentity({ userId, privateKey: legacy, publicKey: bundle.publicKey, savedAt: Date.now() });
+    return { ready: true, created: false, trustedDevice: true };
+  }
+
+  return installFreshIdentity(api, password, userId);
+}
+
+// Kept only for compatibility with older UI imports. Normal sign-in provisions
+// the browser, so users do not need a second password step inside Messages.
 export async function unlockSecureMessaging(api: ApiFn, password: string, userId: string) {
   return prepareSecureMessaging(api, password, userId);
 }
 
-export function secureMessagingUnlocked(userId: string) {
-  // Messaging is intentionally presented as available without a second password step.
-  // A trusted-device key is provisioned during normal sign-in. Existing pre-migration
-  // sessions can sign out and sign in once to establish the persistent device key.
+export function secureMessagingUnlocked(_userId: string) {
   return true;
 }
 
@@ -219,8 +284,8 @@ async function importPublicKey(publicKey: string) {
 }
 
 async function getDevicePrivateKey(userId: string) {
-  const stored = await readDevicePrivateKey(userId).catch(() => null);
-  if (stored) return stored;
+  const stored = await readDeviceIdentity(userId).catch(() => null);
+  if (stored?.privateKey) return stored.privateKey;
   const migrated = await migrateLegacySessionKey(userId).catch(() => null);
   if (migrated) return migrated;
   localStorage.removeItem(`${DEVICE_READY_PREFIX}${userId}`);
