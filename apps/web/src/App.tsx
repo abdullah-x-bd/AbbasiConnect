@@ -1,8 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-type Role = "MEMBER" | "MODERATOR" | "ADMIN";
-type Relationship = { status: string; direction: "OUTGOING" | "INCOMING" | null; interestId: string | null };
-type Profile = {
+type Member = {
   id: string;
   displayName: string;
   username: string;
@@ -11,663 +9,168 @@ type Profile = {
   city?: string | null;
   state?: string | null;
   country?: string | null;
-  heightCm?: number | null;
+  occupation?: string;
+  education?: string;
+  about?: string;
   maritalStatus?: string | null;
-  education: string;
-  occupation: string;
-  profileCreatedBy: string;
-  about: string;
-  familyDetails: string;
-  languages: string;
-  interests: string;
-  preferredMinAge?: number | null;
-  preferredMaxAge?: number | null;
-  preferredMinHeightCm?: number | null;
-  preferredMaxHeightCm?: number | null;
-  preferredLocations: string;
-  preferredEducation: string;
-  preferredOccupation: string;
-  partnerNotes: string;
-  isProfileActive: boolean;
-  verifiedAt?: string;
-  relationship?: Relationship;
-  shortlisted?: boolean;
-  contact?: { email?: string | null; phone?: string | null } | null;
+  heightCm?: number | null;
   email?: string | null;
   phone?: string | null;
   dateOfBirth?: string | null;
-  role?: Role;
+  languages?: string;
+  interests?: string;
+  contactVerified?: boolean;
+  aadhaarVerified?: boolean;
+  isDirectoryVisible?: boolean;
+  role?: string;
 };
 
-type InterestItem = {
-  id: string;
-  status: string;
-  message: string;
-  createdAt: string;
-  profile: Profile;
-  contact?: { email?: string | null; phone?: string | null } | null;
-};
-
-type Report = {
-  id: string;
-  reason: string;
-  details: string;
-  status: string;
-  createdAt: string;
-  reporter: { id: string; displayName: string; username: string };
-  reportedUser: { id: string; displayName: string; username: string; suspendedAt?: string | null };
-};
-
-type Tab = "browse" | "interests" | "shortlist" | "me" | "moderation";
-type EntryMode = "home" | "register" | "signin";
-
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
+type Module = "home" | "rishte" | "family" | "community" | "messages" | "settings";
 const TOKEN_KEY = "abbasiconnect_token";
-const maritalStatuses = [
-  ["NEVER_MARRIED", "Never married"],
-  ["DIVORCED", "Divorced"],
-  ["WIDOWED", "Widowed"],
-  ["ANNULLED", "Annulled"],
-  ["SEPARATED", "Separated"],
-];
-
-function getToken() {
-  return localStorage.getItem(TOKEN_KEY);
-}
+const API_URL = import.meta.env.VITE_API_URL ?? "/api";
 
 async function api(path: string, options: RequestInit = {}) {
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");
-  const token = getToken();
+  const token = localStorage.getItem(TOKEN_KEY);
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const response = await fetch(`${API_URL}${path}`, { ...options, headers });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(data.error ?? "Request failed");
-  }
-  return response.json();
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "Request failed");
+  return data;
 }
 
-function readImage(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error("Could not read image"));
-    reader.readAsDataURL(file);
-  });
-}
-
-function prettyStatus(value?: string | null) {
+function fmt(value?: string | null) {
   if (!value) return "Not specified";
-  return value.toLowerCase().replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+  return value.toLowerCase().replaceAll("_", " ").replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
-function locationOf(profile: Profile) {
-  return [profile.city, profile.state, profile.country].filter(Boolean).join(", ");
+function MemberLine({ member }: { member: Member }) {
+  return <div className="member-line"><strong>{member.displayName}</strong><span>@{member.username}</span><small>{[member.age ? `${member.age} yrs` : "", member.occupation, member.city].filter(Boolean).join(" · ")}</small></div>;
 }
 
 export default function App() {
-  const [user, setUser] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [member, setMember] = useState<Member | null>(null);
+  const [module, setModule] = useState<Module>("home");
+  const [entry, setEntry] = useState<"home" | "signin" | "register">("home");
   const [error, setError] = useState("");
-  const [entryMode, setEntryMode] = useState<EntryMode>("home");
-  const [tab, setTab] = useState<Tab>("browse");
-  const [selectedProfile, setSelectedProfile] = useState<Profile | null>(null);
-
-  const [loginUsername, setLoginUsername] = useState("");
-  const [loginPassword, setLoginPassword] = useState("");
-
-  const [registerStep, setRegisterStep] = useState(1);
-  const [aadhaarFile, setAadhaarFile] = useState<File | null>(null);
-  const [scanning, setScanning] = useState(false);
-  const [identityName, setIdentityName] = useState("");
-  const [reference, setReference] = useState("");
-  const [last4, setLast4] = useState("");
-  const [registrationToken, setRegistrationToken] = useState("");
-  const [reg, setReg] = useState({
-    displayName: "", username: "", password: "", confirmPassword: "", email: "", phone: "",
-    dateOfBirth: "", gender: "", city: "", state: "", country: "India", heightCm: "",
-    maritalStatus: "NEVER_MARRIED", education: "", occupation: "", profileCreatedBy: "SELF",
-    about: "", familyDetails: "", languages: "", interests: "",
-  });
-
-  const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [filters, setFilters] = useState({ q: "", gender: "", city: "", maritalStatus: "", minAge: "", maxAge: "" });
-  const [received, setReceived] = useState<InterestItem[]>([]);
-  const [sent, setSent] = useState<InterestItem[]>([]);
-  const [shortlist, setShortlist] = useState<Profile[]>([]);
-  const [reports, setReports] = useState<Report[]>([]);
-  const [editing, setEditing] = useState(false);
-  const [edit, setEdit] = useState<any>({});
-
-  const registerAge = useMemo(() => {
-    if (!reg.dateOfBirth) return null;
-    const date = new Date(`${reg.dateOfBirth}T00:00:00`);
-    if (Number.isNaN(date.getTime())) return null;
-    const today = new Date();
-    let age = today.getFullYear() - date.getFullYear();
-    const m = today.getMonth() - date.getMonth();
-    if (m < 0 || (m === 0 && today.getDate() < date.getDate())) age -= 1;
-    return age;
-  }, [reg.dateOfBirth]);
-
-  const canModerate = user?.role === "MODERATOR" || user?.role === "ADMIN";
-
-  async function refreshMe() {
-    const me = await api("/auth/me");
-    setUser(me);
-    setEdit({
-      ...me,
-      heightCm: me.heightCm ?? "",
-      preferredMinAge: me.preferredMinAge ?? "",
-      preferredMaxAge: me.preferredMaxAge ?? "",
-      preferredMinHeightCm: me.preferredMinHeightCm ?? "",
-      preferredMaxHeightCm: me.preferredMaxHeightCm ?? "",
-    });
-  }
-
-  async function browseProfiles(event?: FormEvent) {
-    event?.preventDefault();
-    const params = new URLSearchParams();
-    Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
-    const data = await api(`/profiles/browse${params.toString() ? `?${params}` : ""}`);
-    setProfiles(data.profiles);
-  }
+  const [login, setLogin] = useState({ username: "", password: "" });
+  const [register, setRegister] = useState({ displayName: "", username: "", password: "", contact: "", otp: "", dateOfBirth: "", gender: "", city: "", state: "", country: "India" });
+  const [challenge, setChallenge] = useState<{ id: string; developmentCode?: string } | null>(null);
 
   useEffect(() => {
-    if (!getToken()) {
-      setLoading(false);
-      return;
-    }
-    Promise.all([api("/auth/me"), api("/profiles/browse")])
-      .then(([me, browse]) => {
-        setUser(me);
-        setEdit({ ...me });
-        setProfiles(browse.profiles);
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) return setLoading(false);
+    api("/auth/session")
+      .then((data) => {
+        if (data.mode === "admin") window.location.replace("/admin");
+        else setMember(data.user);
       })
       .catch(() => localStorage.removeItem(TOKEN_KEY))
       .finally(() => setLoading(false));
   }, []);
 
   async function signIn(event: FormEvent) {
-    event.preventDefault();
-    setError("");
+    event.preventDefault(); setError("");
     try {
-      const data = await api("/auth/sign-in", { method: "POST", body: JSON.stringify({ username: loginUsername.toLowerCase(), password: loginPassword }) });
+      const data = await api("/auth/sign-in", { method: "POST", body: JSON.stringify({ username: login.username.toLowerCase(), password: login.password }) });
       localStorage.setItem(TOKEN_KEY, data.token);
-      await refreshMe();
-      await browseProfiles();
-      setTab("browse");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Sign in failed");
-    }
+      if (data.mode === "admin") return window.location.assign("/admin");
+      setMember(data.user); setModule("home");
+    } catch (e) { setError(e instanceof Error ? e.message : "Sign in failed"); }
   }
 
-  async function scanAadhaar(event: FormEvent) {
-    event.preventDefault();
-    if (!aadhaarFile) return;
-    setError("");
-    setScanning(true);
-    try {
-      const imageDataUrl = await readImage(aadhaarFile);
-      const data = await api("/auth/dev-aadhaar/scan", { method: "POST", body: JSON.stringify({ fileName: aadhaarFile.name, imageDataUrl }) });
-      setIdentityName(data.extracted?.displayName ?? "");
-      setReg((current) => ({ ...current, displayName: data.extracted?.displayName ?? current.displayName }));
-      setRegisterStep(2);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not read Aadhaar card");
-    } finally {
-      setScanning(false);
-    }
-  }
-
-  async function verifyAadhaar(event: FormEvent) {
-    event.preventDefault();
+  async function requestOtp() {
     setError("");
     try {
-      const data = await api("/auth/dev-aadhaar/verify", {
-        method: "POST",
-        body: JSON.stringify({ identityName, reference, last4: last4 || undefined }),
-      });
-      setRegistrationToken(data.registrationToken);
-      setRegisterStep(3);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Verification failed");
-    }
+      const data = await api("/auth/request-otp", { method: "POST", body: JSON.stringify({ contact: register.contact }) });
+      setChallenge({ id: data.challengeId, developmentCode: data.developmentCode });
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not request OTP"); }
   }
 
   async function createAccount(event: FormEvent) {
-    event.preventDefault();
-    setError("");
-    if (reg.password !== reg.confirmPassword) {
-      setError("Passwords do not match");
-      return;
-    }
+    event.preventDefault(); setError("");
+    if (!challenge) return setError("Request an OTP first");
     try {
-      const payload = {
-        registrationToken,
-        displayName: reg.displayName,
-        username: reg.username.toLowerCase(),
-        password: reg.password,
-        email: reg.email || undefined,
-        phone: reg.phone || undefined,
-        dateOfBirth: reg.dateOfBirth,
-        gender: reg.gender,
-        city: reg.city || undefined,
-        state: reg.state || undefined,
-        country: reg.country,
-        heightCm: reg.heightCm ? Number(reg.heightCm) : undefined,
-        maritalStatus: reg.maritalStatus,
-        education: reg.education,
-        occupation: reg.occupation,
-        profileCreatedBy: reg.profileCreatedBy,
-        about: reg.about,
-        familyDetails: reg.familyDetails,
-        languages: reg.languages,
-        interests: reg.interests,
-      };
-      const data = await api("/auth/register", { method: "POST", body: JSON.stringify(payload) });
-      localStorage.setItem(TOKEN_KEY, data.token);
-      await refreshMe();
-      await browseProfiles();
-      setTab("browse");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Account creation failed");
-    }
+      const data = await api("/auth/register", { method: "POST", body: JSON.stringify({
+        challengeId: challenge.id, otp: register.otp, contact: register.contact, displayName: register.displayName,
+        username: register.username.toLowerCase(), password: register.password, dateOfBirth: register.dateOfBirth || undefined,
+        gender: register.gender || undefined, city: register.city || undefined, state: register.state || undefined, country: register.country,
+      }) });
+      localStorage.setItem(TOKEN_KEY, data.token); setMember(data.user); setModule("home");
+    } catch (e) { setError(e instanceof Error ? e.message : "Registration failed"); }
   }
 
-  async function openProfile(profile: Profile) {
-    try {
-      const data = await api(`/profiles/${encodeURIComponent(profile.username)}`);
-      setSelectedProfile(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load profile");
-    }
-  }
+  function logout() { localStorage.removeItem(TOKEN_KEY); setMember(null); setModule("home"); setEntry("home"); }
 
-  async function sendInterest(profile: Profile) {
-    const message = window.prompt("Optional short note with your interest", "") ?? "";
-    try {
-      const data = await api(`/profiles/${profile.id}/interest`, { method: "POST", body: JSON.stringify({ message }) });
-      if (data.matched) window.alert("Mutual interest. Contact details are now available to both of you.");
-      await browseProfiles();
-      if (selectedProfile?.id === profile.id) await openProfile(profile);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not send interest");
-    }
-  }
+  if (loading) return <main className="center-screen">Opening AbbasiConnect…</main>;
 
-  async function toggleShortlist(profile: Profile) {
-    await api(`/profiles/${profile.id}/shortlist`, { method: profile.shortlisted ? "DELETE" : "POST" });
-    setProfiles((items) => items.map((item) => item.id === profile.id ? { ...item, shortlisted: !profile.shortlisted } : item));
-    if (selectedProfile?.id === profile.id) setSelectedProfile({ ...selectedProfile, shortlisted: !profile.shortlisted });
-    if (tab === "shortlist") await loadShortlist();
-  }
+  if (!member) return <main className="auth-shell"><section className="auth-card">
+    <div className="wordmark">ABBASI CONNECT</div>
+    <h1>One community. Connected families.</h1>
+    <p className="lede">Family trees, Rishte, community posts and private messages. Text only. No profile photographs.</p>
+    {entry === "home" && <div className="entry-grid"><button className="entry-choice" onClick={() => setEntry("register")}><strong>Create account</strong><span>Join with a phone number or email</span></button><button className="entry-choice secondary" onClick={() => setEntry("signin")}><strong>Sign in</strong><span>Members and administrators use the same login</span></button></div>}
+    {entry === "signin" && <form className="stack" onSubmit={signIn}><h2>Sign in</h2><label>Username<input value={login.username} onChange={(e) => setLogin({ ...login, username: e.target.value })} required /></label><label>Password<input type="password" value={login.password} onChange={(e) => setLogin({ ...login, password: e.target.value })} required /></label>{error && <p className="error">{error}</p>}<div className="button-row"><button type="button" className="ghost" onClick={() => setEntry("home")}>Back</button><button>Sign in</button></div></form>}
+    {entry === "register" && <form className="stack" onSubmit={createAccount}><h2>Create your account</h2><div className="form-grid two"><label>Name<input value={register.displayName} onChange={(e) => setRegister({ ...register, displayName: e.target.value })} required /></label><label>Username<input value={register.username} onChange={(e) => setRegister({ ...register, username: e.target.value.replace(/[^a-zA-Z0-9_]/g, "") })} minLength={3} required /></label><label>Phone or email<input value={register.contact} onChange={(e) => setRegister({ ...register, contact: e.target.value })} placeholder="+91… or name@example.com" required /></label><label>Password<input type="password" minLength={8} value={register.password} onChange={(e) => setRegister({ ...register, password: e.target.value })} required /></label><label>Date of birth, optional<input type="date" value={register.dateOfBirth} onChange={(e) => setRegister({ ...register, dateOfBirth: e.target.value })} /></label><label>Gender, optional<select value={register.gender} onChange={(e) => setRegister({ ...register, gender: e.target.value })}><option value="">Select</option><option>Male</option><option>Female</option><option>Other</option></select></label><label>City<input value={register.city} onChange={(e) => setRegister({ ...register, city: e.target.value })} /></label><label>State<input value={register.state} onChange={(e) => setRegister({ ...register, state: e.target.value })} /></label></div><div className="otp-row"><button type="button" className="secondary" onClick={requestOtp}>Request OTP</button>{challenge?.developmentCode && <div className="dev-code"><span>Development OTP</span><strong>{challenge.developmentCode}</strong></div>}<label>OTP<input inputMode="numeric" maxLength={6} value={register.otp} onChange={(e) => setRegister({ ...register, otp: e.target.value.replace(/\D/g, "").slice(0, 6) })} required /></label></div><p className="fine-print">WhatsApp/SMS is not connected yet. Development mode displays the OTP here. Aadhaar is optional and can be linked later.</p>{error && <p className="error">{error}</p>}<div className="button-row"><button type="button" className="ghost" onClick={() => setEntry("home")}>Back</button><button>Create account</button></div></form>}
+  </section></main>;
 
-  async function loadInterests() {
-    const data = await api("/interests");
-    setReceived(data.received);
-    setSent(data.sent);
-  }
-
-  async function actOnInterest(id: string, action: "ACCEPT" | "DECLINE" | "WITHDRAW") {
-    await api(`/interests/${id}`, { method: "PATCH", body: JSON.stringify({ action }) });
-    await loadInterests();
-    await browseProfiles();
-  }
-
-  async function loadShortlist() {
-    const data = await api("/shortlist");
-    setShortlist(data.profiles);
-  }
-
-  async function reportProfile(profile: Profile) {
-    const details = window.prompt("Tell us what is wrong with this profile", "");
-    if (details === null) return;
-    await api("/reports", { method: "POST", body: JSON.stringify({ reportedUserId: profile.id, reason: "OTHER", details }) });
-    window.alert("Profile reported to moderation.");
-  }
-
-  async function blockProfile(profile: Profile) {
-    if (!window.confirm(`Block @${profile.username}? Interests and shortlist links between you will be removed.`)) return;
-    await api(`/profiles/${profile.id}/block`, { method: "POST" });
-    setSelectedProfile(null);
-    await browseProfiles();
-  }
-
-  async function saveProfile(event: FormEvent) {
-    event.preventDefault();
-    setError("");
-    const numericOrNull = (value: any) => value === "" || value == null ? null : Number(value);
-    try {
-      const payload = {
-        displayName: edit.displayName,
-        username: String(edit.username).toLowerCase(),
-        email: edit.email || undefined,
-        phone: edit.phone || undefined,
-        gender: edit.gender,
-        city: edit.city || undefined,
-        state: edit.state || undefined,
-        country: edit.country || "India",
-        heightCm: numericOrNull(edit.heightCm),
-        maritalStatus: edit.maritalStatus,
-        education: edit.education || "",
-        occupation: edit.occupation || "",
-        profileCreatedBy: edit.profileCreatedBy || "SELF",
-        about: edit.about || "",
-        familyDetails: edit.familyDetails || "",
-        languages: edit.languages || "",
-        interests: edit.interests || "",
-        preferredMinAge: numericOrNull(edit.preferredMinAge),
-        preferredMaxAge: numericOrNull(edit.preferredMaxAge),
-        preferredMinHeightCm: numericOrNull(edit.preferredMinHeightCm),
-        preferredMaxHeightCm: numericOrNull(edit.preferredMaxHeightCm),
-        preferredLocations: edit.preferredLocations || "",
-        preferredEducation: edit.preferredEducation || "",
-        preferredOccupation: edit.preferredOccupation || "",
-        partnerNotes: edit.partnerNotes || "",
-        isProfileActive: Boolean(edit.isProfileActive),
-      };
-      const data = await api("/profiles/me", { method: "PATCH", body: JSON.stringify(payload) });
-      setUser(data);
-      setEdit({ ...data });
-      setEditing(false);
-      await browseProfiles();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save profile");
-    }
-  }
-
-  async function loadModeration() {
-    const data = await api("/moderation/reports");
-    setReports(data.reports);
-  }
-
-  async function moderate(report: Report, action: string) {
-    const note = window.prompt("Optional moderator note", "") ?? "";
-    await api(`/moderation/reports/${report.id}`, { method: "PATCH", body: JSON.stringify({ action, note }) });
-    await loadModeration();
-  }
-
-  function logout() {
-    localStorage.removeItem(TOKEN_KEY);
-    setUser(null);
-    setProfiles([]);
-    setSelectedProfile(null);
-    setEntryMode("home");
-  }
-
-  function changeTab(next: Tab) {
-    setSelectedProfile(null);
-    setTab(next);
-    setError("");
-    if (next === "browse") browseProfiles();
-    if (next === "interests") loadInterests();
-    if (next === "shortlist") loadShortlist();
-    if (next === "moderation") loadModeration();
-  }
-
-  if (loading) return <main className="center-screen">Loading AbbasiConnect...</main>;
-
-  if (!user) {
-    return (
-      <main className="auth-shell">
-        <section className="auth-card wide-auth">
-          <div className="brand-mark">AC</div>
-          <h1>AbbasiConnect</h1>
-          <p className="muted">Verified, text-only matrimonial profiles. No photos.</p>
-
-          {entryMode === "home" && (
-            <div className="entry-grid">
-              <button className="entry-choice" onClick={() => { setEntryMode("register"); setRegisterStep(1); setError(""); }}>
-                <strong>Register</strong><span>Create an Aadhaar-linked matrimonial profile</span>
-              </button>
-              <button className="entry-choice secondary" onClick={() => { setEntryMode("signin"); setError(""); }}>
-                <strong>Sign in</strong><span>Use your username and password</span>
-              </button>
-            </div>
-          )}
-
-          {entryMode === "signin" && (
-            <form className="stack" onSubmit={signIn}>
-              <div className="step-label">Sign in</div>
-              <label>Username<input value={loginUsername} onChange={(event) => setLoginUsername(event.target.value.replace(/[^a-zA-Z0-9_]/g, ""))} placeholder="username" required /></label>
-              <label>Password<input type="password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} required /></label>
-              {error && <p className="error">{error}</p>}
-              <div className="button-row"><button type="button" className="ghost" onClick={() => setEntryMode("home")}>Back</button><button type="submit">Sign in</button></div>
-            </form>
-          )}
-
-          {entryMode === "register" && registerStep === 1 && (
-            <form className="stack" onSubmit={scanAadhaar}>
-              <div className="step-label">Register · step 1 of 3</div>
-              <h2>Verify identity</h2>
-              <label>Aadhaar card image<input type="file" accept="image/*" onChange={(event) => setAadhaarFile(event.target.files?.[0] ?? null)} required /></label>
-              <p className="fine-print">The Aadhaar image is temporary verification input only. AbbasiConnect matrimonial profiles never contain photos.</p>
-              {error && <p className="error">{error}</p>}
-              <div className="button-row"><button type="button" className="ghost" onClick={() => setEntryMode("home")}>Back</button><button type="submit" disabled={!aadhaarFile || scanning}>{scanning ? "Reading card..." : "Read Aadhaar"}</button></div>
-            </form>
-          )}
-
-          {entryMode === "register" && registerStep === 2 && (
-            <form className="stack" onSubmit={verifyAadhaar}>
-              <div className="step-label">Register · step 2 of 3</div>
-              <h2>Confirm identity</h2>
-              <label>Name read from Aadhaar<input value={identityName} onChange={(event) => { setIdentityName(event.target.value); setReg((current) => ({ ...current, displayName: event.target.value })); }} required /></label>
-              <label>Development verification reference<input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="DEV-ABBASI-001" minLength={4} required /></label>
-              <label>Aadhaar last 4, optional in development<input value={last4} onChange={(event) => setLast4(event.target.value.replace(/\D/g, "").slice(0, 4))} inputMode="numeric" /></label>
-              {error && <p className="error">{error}</p>}
-              <div className="button-row"><button type="button" className="ghost" onClick={() => setRegisterStep(1)}>Back</button><button type="submit">Verify identity</button></div>
-            </form>
-          )}
-
-          {entryMode === "register" && registerStep === 3 && (
-            <form className="stack" onSubmit={createAccount}>
-              <div className="step-label">Register · step 3 of 3</div>
-              <h2>Create matrimonial profile</h2>
-              <p className="verified-banner">Identity verified for <strong>{identityName}</strong></p>
-              <div className="form-grid two">
-                <label>Display name<input value={reg.displayName} onChange={(e) => setReg({ ...reg, displayName: e.target.value })} required /></label>
-                <label>Username<input value={reg.username} onChange={(e) => setReg({ ...reg, username: e.target.value.replace(/[^a-zA-Z0-9_]/g, "") })} required minLength={3} /></label>
-                <label>Date of birth<input type="date" value={reg.dateOfBirth} onChange={(e) => setReg({ ...reg, dateOfBirth: e.target.value })} required /></label>
-                <label>Age<input value={registerAge ?? ""} readOnly placeholder="Calculated from DOB" /></label>
-                <label>Gender<select value={reg.gender} onChange={(e) => setReg({ ...reg, gender: e.target.value })} required><option value="">Select</option><option>Male</option><option>Female</option><option>Other</option></select></label>
-                <label>Marital status<select value={reg.maritalStatus} onChange={(e) => setReg({ ...reg, maritalStatus: e.target.value })}>{maritalStatuses.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-                <label>Height in cm<input type="number" min="120" max="230" value={reg.heightCm} onChange={(e) => setReg({ ...reg, heightCm: e.target.value })} /></label>
-                <label>Profile created by<select value={reg.profileCreatedBy} onChange={(e) => setReg({ ...reg, profileCreatedBy: e.target.value })}><option value="SELF">Self</option><option value="PARENT">Parent</option><option value="FAMILY">Family</option><option value="GUARDIAN">Guardian</option></select></label>
-                <label>Education<input value={reg.education} onChange={(e) => setReg({ ...reg, education: e.target.value })} required /></label>
-                <label>Occupation<input value={reg.occupation} onChange={(e) => setReg({ ...reg, occupation: e.target.value })} required /></label>
-                <label>Email<input type="email" value={reg.email} onChange={(e) => setReg({ ...reg, email: e.target.value })} /></label>
-                <label>Contact number<input value={reg.phone} onChange={(e) => setReg({ ...reg, phone: e.target.value })} placeholder="+91..." /></label>
-                <label>City<input value={reg.city} onChange={(e) => setReg({ ...reg, city: e.target.value })} /></label>
-                <label>State<input value={reg.state} onChange={(e) => setReg({ ...reg, state: e.target.value })} /></label>
-                <label>Country<input value={reg.country} onChange={(e) => setReg({ ...reg, country: e.target.value })} required /></label>
-                <label>Languages<input value={reg.languages} onChange={(e) => setReg({ ...reg, languages: e.target.value })} placeholder="English, Hindi, Urdu" /></label>
-              </div>
-              <label>About you<textarea rows={4} value={reg.about} onChange={(e) => setReg({ ...reg, about: e.target.value })} placeholder="A short introduction" /></label>
-              <label>Family details<textarea rows={3} value={reg.familyDetails} onChange={(e) => setReg({ ...reg, familyDetails: e.target.value })} /></label>
-              <label>Interests<textarea rows={2} value={reg.interests} onChange={(e) => setReg({ ...reg, interests: e.target.value })} /></label>
-              <div className="form-grid two">
-                <label>Password<input type="password" value={reg.password} onChange={(e) => setReg({ ...reg, password: e.target.value })} minLength={8} required /></label>
-                <label>Confirm password<input type="password" value={reg.confirmPassword} onChange={(e) => setReg({ ...reg, confirmPassword: e.target.value })} minLength={8} required /></label>
-              </div>
-              <p className="fine-print">At least one of email or contact number is required. Contact details stay private until an interest is accepted.</p>
-              {error && <p className="error">{error}</p>}
-              <div className="button-row"><button type="button" className="ghost" onClick={() => setRegisterStep(2)}>Back</button><button type="submit">Create profile</button></div>
-            </form>
-          )}
-        </section>
-      </main>
-    );
-  }
-
-  function ProfileCard({ profile }: { profile: Profile }) {
-    const relation = profile.relationship;
-    return (
-      <article className="match-card">
-        <div className="match-head">
-          <div>
-            <button className="name-link" onClick={() => openProfile(profile)}>{profile.displayName}</button>
-            <div className="handle">@{profile.username} · Aadhaar-linked identity</div>
-          </div>
-          <button className={profile.shortlisted ? "bookmark active" : "bookmark"} onClick={() => toggleShortlist(profile)}>{profile.shortlisted ? "Shortlisted" : "Shortlist"}</button>
-        </div>
-        <div className="facts">
-          {profile.age && <span>{profile.age} years</span>}
-          {profile.heightCm && <span>{profile.heightCm} cm</span>}
-          {profile.maritalStatus && <span>{prettyStatus(profile.maritalStatus)}</span>}
-          {locationOf(profile) && <span>{locationOf(profile)}</span>}
-        </div>
-        <div className="profile-lines"><p><strong>Education</strong> {profile.education || "Not specified"}</p><p><strong>Occupation</strong> {profile.occupation || "Not specified"}</p></div>
-        {profile.about && <p className="about-preview">{profile.about}</p>}
-        <div className="card-actions">
-          <button className="ghost" onClick={() => openProfile(profile)}>View profile</button>
-          {relation?.status === "NONE" && <button onClick={() => sendInterest(profile)}>Send interest</button>}
-          {relation?.status === "PENDING" && relation.direction === "OUTGOING" && <span className="status-pill">Interest sent</span>}
-          {relation?.status === "PENDING" && relation.direction === "INCOMING" && <span className="status-pill incoming">Interested in you</span>}
-          {relation?.status === "ACCEPTED" && <span className="status-pill matched">Mutual interest</span>}
-        </div>
-      </article>
-    );
-  }
-
-  if (selectedProfile) {
-    const p = selectedProfile;
-    return (
-      <main className="app-shell">
-        <Header />
-        <div className="page-wrap narrow">
-          <button className="ghost" onClick={() => setSelectedProfile(null)}>← Back</button>
-          <section className="profile-detail">
-            <div className="profile-title-row"><div><h1>{p.displayName}</h1><p className="handle">@{p.username} · verified identity</p></div><button className={p.shortlisted ? "bookmark active" : "bookmark"} onClick={() => toggleShortlist(p)}>{p.shortlisted ? "Shortlisted" : "Shortlist"}</button></div>
-            <div className="facts large">
-              {p.age && <span>{p.age} years</span>}{p.heightCm && <span>{p.heightCm} cm</span>}{p.gender && <span>{p.gender}</span>}{p.maritalStatus && <span>{prettyStatus(p.maritalStatus)}</span>}{locationOf(p) && <span>{locationOf(p)}</span>}
-            </div>
-            <Detail title="Education" value={p.education} />
-            <Detail title="Occupation" value={p.occupation} />
-            <Detail title="About" value={p.about} />
-            <Detail title="Family" value={p.familyDetails} />
-            <Detail title="Languages" value={p.languages} />
-            <Detail title="Interests" value={p.interests} />
-            <Detail title="Profile created by" value={prettyStatus(p.profileCreatedBy)} />
-            <div className="detail-section"><h3>Partner preferences</h3><p>Age {p.preferredMinAge || "any"} to {p.preferredMaxAge || "any"}</p><p>Height {p.preferredMinHeightCm || "any"} to {p.preferredMaxHeightCm || "any"} cm</p><p>Locations {p.preferredLocations || "No preference listed"}</p><p>Education {p.preferredEducation || "No preference listed"}</p><p>Occupation {p.preferredOccupation || "No preference listed"}</p>{p.partnerNotes && <p>{p.partnerNotes}</p>}</div>
-            {p.contact && <div className="contact-box"><h3>Contact unlocked</h3><p>This profile has accepted mutual interest with you.</p>{p.contact.email && <p><strong>Email</strong> {p.contact.email}</p>}{p.contact.phone && <p><strong>Phone</strong> {p.contact.phone}</p>}</div>}
-            <div className="card-actions prominent">
-              {p.relationship?.status === "NONE" && <button onClick={() => sendInterest(p)}>Send interest</button>}
-              {p.relationship?.status === "PENDING" && p.relationship.direction === "OUTGOING" && <span className="status-pill">Interest sent</span>}
-              {p.relationship?.status === "PENDING" && p.relationship.direction === "INCOMING" && <><button onClick={() => actOnInterest(p.relationship!.interestId!, "ACCEPT")}>Accept interest</button><button className="ghost" onClick={() => actOnInterest(p.relationship!.interestId!, "DECLINE")}>Decline</button></>}
-              {p.relationship?.status === "ACCEPTED" && <span className="status-pill matched">Mutual interest</span>}
-              <button className="ghost danger" onClick={() => reportProfile(p)}>Report</button><button className="ghost danger" onClick={() => blockProfile(p)}>Block</button>
-            </div>
-          </section>
-        </div>
-      </main>
-    );
-  }
-
-  function Header() {
-    return (
-      <header className="topbar">
-        <button className="brand-button" onClick={() => changeTab("browse")}>AbbasiConnect</button>
-        <nav className="nav-tabs">
-          <button className={tab === "browse" ? "nav-active" : ""} onClick={() => changeTab("browse")}>Browse</button>
-          <button className={tab === "interests" ? "nav-active" : ""} onClick={() => changeTab("interests")}>Interests</button>
-          <button className={tab === "shortlist" ? "nav-active" : ""} onClick={() => changeTab("shortlist")}>Shortlist</button>
-          <button className={tab === "me" ? "nav-active" : ""} onClick={() => changeTab("me")}>My profile</button>
-          {canModerate && <button className={tab === "moderation" ? "nav-active" : ""} onClick={() => changeTab("moderation")}>Moderation</button>}
-        </nav>
-        <button className="ghost" onClick={logout}>Log out</button>
-      </header>
-    );
-  }
-
-  return (
-    <main className="app-shell">
-      <Header />
-      <div className="page-wrap">
-        {error && <div className="error panel"><button className="dismiss" onClick={() => setError("")}>×</button>{error}</div>}
-
-        {tab === "browse" && <>
-          <section className="page-heading"><div><h1>Browse profiles</h1><p>Verified text-only matrimonial profiles. No photographs.</p></div></section>
-          <form className="filters" onSubmit={browseProfiles}>
-            <input placeholder="Name, city, education, occupation" value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} />
-            <select value={filters.gender} onChange={(e) => setFilters({ ...filters, gender: e.target.value })}><option value="">Any gender</option><option>Male</option><option>Female</option><option>Other</option></select>
-            <input placeholder="City" value={filters.city} onChange={(e) => setFilters({ ...filters, city: e.target.value })} />
-            <select value={filters.maritalStatus} onChange={(e) => setFilters({ ...filters, maritalStatus: e.target.value })}><option value="">Any marital status</option>{maritalStatuses.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-            <input type="number" min="18" max="100" placeholder="Min age" value={filters.minAge} onChange={(e) => setFilters({ ...filters, minAge: e.target.value })} />
-            <input type="number" min="18" max="100" placeholder="Max age" value={filters.maxAge} onChange={(e) => setFilters({ ...filters, maxAge: e.target.value })} />
-            <button type="submit">Apply filters</button>
-          </form>
-          <div className="match-grid">{profiles.length ? profiles.map((profile) => <ProfileCard key={profile.id} profile={profile} />) : <div className="empty-state"><h3>No profiles found</h3><p>Try broadening your filters.</p></div>}</div>
-        </>}
-
-        {tab === "interests" && <section><div className="page-heading"><div><h1>Interests</h1><p>Requests, responses and mutual interests.</p></div></div>
-          <h2>Received</h2><div className="interest-list">{received.length ? received.map((item) => <InterestRow key={item.id} item={item} received />) : <p className="muted">No interests received yet.</p>}</div>
-          <h2 className="section-gap">Sent</h2><div className="interest-list">{sent.length ? sent.map((item) => <InterestRow key={item.id} item={item} />) : <p className="muted">No interests sent yet.</p>}</div>
-        </section>}
-
-        {tab === "shortlist" && <section><div className="page-heading"><div><h1>Shortlist</h1><p>Profiles you saved for later.</p></div></div><div className="match-grid">{shortlist.length ? shortlist.map((profile) => <ProfileCard key={profile.id} profile={profile} />) : <div className="empty-state"><h3>Your shortlist is empty</h3></div>}</div></section>}
-
-        {tab === "me" && user && <section className="profile-detail">
-          <div className="profile-title-row"><div><h1>{user.displayName}</h1><p className="handle">@{user.username} · your private account and matrimonial profile</p></div><button onClick={() => setEditing(!editing)}>{editing ? "Cancel" : "Edit profile"}</button></div>
-          {!editing ? <>
-            <div className="facts large"><span>{user.age} years</span>{user.heightCm && <span>{user.heightCm} cm</span>}<span>{prettyStatus(user.maritalStatus)}</span>{locationOf(user) && <span>{locationOf(user)}</span>}</div>
-            <Detail title="Education" value={user.education} /><Detail title="Occupation" value={user.occupation} /><Detail title="About" value={user.about} /><Detail title="Family" value={user.familyDetails} /><Detail title="Languages" value={user.languages} /><Detail title="Interests" value={user.interests} />
-            <div className="detail-section"><h3>Private account details</h3><p><strong>Email</strong> {user.email || "Not provided"}</p><p><strong>Phone</strong> {user.phone || "Not provided"}</p><p><strong>Date of birth</strong> {user.dateOfBirth || "Not provided"}</p><p><strong>Aadhaar identity</strong> Verified and linked</p></div>
-            <div className="detail-section"><h3>Partner preferences</h3><p>Age {user.preferredMinAge || "any"} to {user.preferredMaxAge || "any"}</p><p>Preferred locations {user.preferredLocations || "Not set"}</p><p>{user.partnerNotes || "No additional preference notes"}</p></div>
-            <p className={user.isProfileActive ? "active-state" : "inactive-state"}>{user.isProfileActive ? "Profile is visible in browse" : "Profile is paused and hidden from browse"}</p>
-          </> : <ProfileEditor />}
-        </section>}
-
-        {tab === "moderation" && canModerate && <section><div className="page-heading"><div><h1>Moderation</h1><p>Review reported matrimonial profiles.</p></div></div><div className="report-list">{reports.map((report) => <article className="report-card" key={report.id}><div><strong>{report.reason}</strong> · {report.status}</div><p>Reported profile <strong>@{report.reportedUser.username}</strong></p><p>Reporter @{report.reporter.username}</p>{report.details && <blockquote>{report.details}</blockquote>}<div className="card-actions"><button onClick={() => moderate(report, "REVIEW")}>Mark reviewed</button><button onClick={() => moderate(report, "SUSPEND_USER")}>Suspend profile</button><button className="ghost" onClick={() => moderate(report, "RESTORE_USER")}>Restore</button><button className="ghost" onClick={() => moderate(report, "DISMISS")}>Dismiss</button></div></article>)}</div></section>}
-      </div>
-    </main>
-  );
-
-  function InterestRow({ item, received: isReceived = false }: { item: InterestItem; received?: boolean }) {
-    return <article className="interest-row"><button className="member-main" onClick={() => openProfile(item.profile)}><strong>{item.profile.displayName}</strong><span>@{item.profile.username}</span><small>{item.profile.age ? `${item.profile.age} years · ` : ""}{item.profile.occupation}{locationOf(item.profile) ? ` · ${locationOf(item.profile)}` : ""}</small></button><div className="interest-side"><span className={`status-pill ${item.status === "ACCEPTED" ? "matched" : ""}`}>{prettyStatus(item.status)}</span>{item.message && <small>“{item.message}”</small>}{item.contact && <small>{item.contact.email || ""} {item.contact.phone || ""}</small>}{isReceived && item.status === "PENDING" && <div className="button-row"><button onClick={() => actOnInterest(item.id, "ACCEPT")}>Accept</button><button className="ghost" onClick={() => actOnInterest(item.id, "DECLINE")}>Decline</button></div>}{!isReceived && item.status === "PENDING" && <button className="ghost" onClick={() => actOnInterest(item.id, "WITHDRAW")}>Withdraw</button>}</div></article>;
-  }
-
-  function ProfileEditor() {
-    const set = (key: string, value: any) => setEdit((current: any) => ({ ...current, [key]: value }));
-    return <form className="stack" onSubmit={saveProfile}>
-      <div className="form-grid two">
-        <label>Display name<input value={edit.displayName || ""} onChange={(e) => set("displayName", e.target.value)} required /></label>
-        <label>Username<input value={edit.username || ""} onChange={(e) => set("username", e.target.value.replace(/[^a-zA-Z0-9_]/g, ""))} required /></label>
-        <label>Email<input type="email" value={edit.email || ""} onChange={(e) => set("email", e.target.value)} /></label>
-        <label>Contact number<input value={edit.phone || ""} onChange={(e) => set("phone", e.target.value)} /></label>
-        <label>Gender<select value={edit.gender || ""} onChange={(e) => set("gender", e.target.value)}><option>Male</option><option>Female</option><option>Other</option></select></label>
-        <label>Marital status<select value={edit.maritalStatus || "NEVER_MARRIED"} onChange={(e) => set("maritalStatus", e.target.value)}>{maritalStatuses.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <label>Height cm<input type="number" min="120" max="230" value={edit.heightCm ?? ""} onChange={(e) => set("heightCm", e.target.value)} /></label>
-        <label>Profile created by<select value={edit.profileCreatedBy || "SELF"} onChange={(e) => set("profileCreatedBy", e.target.value)}><option value="SELF">Self</option><option value="PARENT">Parent</option><option value="FAMILY">Family</option><option value="GUARDIAN">Guardian</option></select></label>
-        <label>Education<input value={edit.education || ""} onChange={(e) => set("education", e.target.value)} /></label>
-        <label>Occupation<input value={edit.occupation || ""} onChange={(e) => set("occupation", e.target.value)} /></label>
-        <label>City<input value={edit.city || ""} onChange={(e) => set("city", e.target.value)} /></label>
-        <label>State<input value={edit.state || ""} onChange={(e) => set("state", e.target.value)} /></label>
-        <label>Country<input value={edit.country || "India"} onChange={(e) => set("country", e.target.value)} /></label>
-        <label>Languages<input value={edit.languages || ""} onChange={(e) => set("languages", e.target.value)} /></label>
-      </div>
-      <label>About<textarea rows={5} value={edit.about || ""} onChange={(e) => set("about", e.target.value)} /></label>
-      <label>Family details<textarea rows={4} value={edit.familyDetails || ""} onChange={(e) => set("familyDetails", e.target.value)} /></label>
-      <label>Interests<textarea rows={3} value={edit.interests || ""} onChange={(e) => set("interests", e.target.value)} /></label>
-      <h3>Partner preferences</h3>
-      <div className="form-grid two">
-        <label>Minimum age<input type="number" min="18" max="100" value={edit.preferredMinAge ?? ""} onChange={(e) => set("preferredMinAge", e.target.value)} /></label>
-        <label>Maximum age<input type="number" min="18" max="100" value={edit.preferredMaxAge ?? ""} onChange={(e) => set("preferredMaxAge", e.target.value)} /></label>
-        <label>Minimum height cm<input type="number" min="120" max="230" value={edit.preferredMinHeightCm ?? ""} onChange={(e) => set("preferredMinHeightCm", e.target.value)} /></label>
-        <label>Maximum height cm<input type="number" min="120" max="230" value={edit.preferredMaxHeightCm ?? ""} onChange={(e) => set("preferredMaxHeightCm", e.target.value)} /></label>
-        <label>Preferred locations<input value={edit.preferredLocations || ""} onChange={(e) => set("preferredLocations", e.target.value)} /></label>
-        <label>Preferred education<input value={edit.preferredEducation || ""} onChange={(e) => set("preferredEducation", e.target.value)} /></label>
-        <label>Preferred occupation<input value={edit.preferredOccupation || ""} onChange={(e) => set("preferredOccupation", e.target.value)} /></label>
-      </div>
-      <label>Additional partner preference notes<textarea rows={4} value={edit.partnerNotes || ""} onChange={(e) => set("partnerNotes", e.target.value)} /></label>
-      <label className="toggle-row"><input type="checkbox" checked={Boolean(edit.isProfileActive)} onChange={(e) => set("isProfileActive", e.target.checked)} />Show my profile in browse</label>
-      <button type="submit">Save profile</button>
-    </form>;
-  }
+  return <main className="app-shell">
+    <header className="topbar"><button className="brand-button" onClick={() => setModule("home")}>AbbasiConnect</button><div className="top-member"><span>{member.displayName}</span><small>@{member.username}</small></div><button className="ghost" onClick={() => setModule("settings")}>Account</button><button className="ghost" onClick={logout}>Log out</button></header>
+    {module === "home" ? <Home member={member} open={setModule} /> : <div className="page-wrap"><button className="back-link" onClick={() => setModule("home")}>← All services</button>{module === "rishte" && <Rishte me={member} />}{module === "family" && <Family me={member} />}{module === "community" && <Community me={member} />}{module === "messages" && <Messages me={member} />}{module === "settings" && <Settings member={member} setMember={setMember} />}</div>}
+  </main>;
 }
 
-function Detail({ title, value }: { title: string; value?: string | null }) {
-  if (!value) return null;
-  return <div className="detail-section"><h3>{title}</h3><p>{value}</p></div>;
+function Home({ member, open }: { member: Member; open: (module: Module) => void }) {
+  return <div className="home-wrap"><section className="home-intro"><div><p className="eyebrow">WELCOME, {member.displayName.toUpperCase()}</p><h1>Your community, in one place.</h1><p>Start with your family. Everything else grows from verified people and relationships.</p></div><div className="identity-strip"><span className={member.contactVerified ? "ok-dot" : "dot"}></span><div><strong>Contact verified</strong><small>Aadhaar remains optional</small></div></div></section><section className="module-grid"><button className="module-card" onClick={() => open("rishte")}><span className="module-number">01</span><h2>Rishte</h2><p>Opt in to a clean, text-only list of eligible community members.</p><b>Open Rishte →</b></button><button className="module-card" onClick={() => open("family")}><span className="module-number">02</span><h2>Family Tree</h2><p>Build your family graph, connect relatives by code and control who can view it.</p><b>Open Family Tree →</b></button><button className="module-card" onClick={() => open("community")}><span className="module-number">03</span><h2>Community</h2><p>Share text updates and announcements with the wider community.</p><b>Open Community →</b></button><button className="module-card" onClick={() => open("messages")}><span className="module-number">04</span><h2>Messages</h2><p>Private one-to-one conversations between registered members.</p><b>Open Messages →</b></button></section></div>;
+}
+
+function Rishte({ me }: { me: Member }) {
+  const [profiles, setProfiles] = useState<any[]>([]); const [mine, setMine] = useState<any>(null); const [interests, setInterests] = useState<any>({ received: [], sent: [] }); const [error, setError] = useState(""); const [filter, setFilter] = useState({ q: "", city: "", gender: "" });
+  const [edit, setEdit] = useState({ isActive: false, headline: "", bio: "", familyNote: "", lookingFor: "" });
+  async function load() { try { const params = new URLSearchParams(); Object.entries(filter).forEach(([k, v]) => v && params.set(k, v)); const [a,b,c] = await Promise.all([api(`/rishte${params.toString() ? `?${params}` : ""}`), api("/rishte/me"), api("/rishte/interests")]); setProfiles(a.profiles); setMine(b.profile); setEdit(b.profile ? { isActive: b.profile.isActive, headline: b.profile.headline, bio: b.profile.bio, familyNote: b.profile.familyNote, lookingFor: b.profile.lookingFor } : edit); setInterests(c); } catch(e){setError(e instanceof Error?e.message:"Could not load Rishte");} }
+  useEffect(() => { load(); }, []);
+  async function save(event: FormEvent) { event.preventDefault(); await api("/rishte/me", { method: "PUT", body: JSON.stringify(edit) }); await load(); }
+  async function send(profile: any) { const message = window.prompt("Optional note", "") ?? ""; await api(`/rishte/${profile.id}/interest`, { method: "POST", body: JSON.stringify({ message }) }); await load(); }
+  async function act(id: string, action: string) { await api(`/rishte/interests/${id}`, { method: "PATCH", body: JSON.stringify({ action }) }); await load(); }
+  return <section><div className="page-heading"><div><p className="eyebrow">RISHTE</p><h1>Eligible members</h1><p>Only people who explicitly opt in appear here. No images are used.</p></div></div>{error && <p className="error">{error}</p>}<div className="split-layout"><div><form className="filters" onSubmit={(e) => { e.preventDefault(); load(); }}><input placeholder="Name, education, occupation" value={filter.q} onChange={(e)=>setFilter({...filter,q:e.target.value})}/><input placeholder="City" value={filter.city} onChange={(e)=>setFilter({...filter,city:e.target.value})}/><select value={filter.gender} onChange={(e)=>setFilter({...filter,gender:e.target.value})}><option value="">Any gender</option><option>Male</option><option>Female</option><option>Other</option></select><button>Search</button></form><div className="card-list">{profiles.map((p) => <article className="plain-card" key={p.id}><div className="card-head"><MemberLine member={p}/><span className="verify-chip">{p.contactVerified ? "Verified contact" : "Member"}</span></div><h3>{p.rishte.headline || "Rishte profile"}</h3><p>{p.rishte.bio || p.about || "No introduction yet."}</p>{p.rishte.familyNote && <p><strong>Family</strong> {p.rishte.familyNote}</p>}{p.rishte.lookingFor && <p><strong>Looking for</strong> {p.rishte.lookingFor}</p>}<div className="button-row">{p.relationship?.status === "NONE" && <button onClick={() => send(p)}>Send interest</button>}{p.relationship?.status !== "NONE" && <span className="status-pill">{fmt(p.relationship.status)}</span>}<button className="ghost" onClick={() => api(`/messages/threads/${p.id}`, { method: "POST" }).then((d)=>window.alert(`Message thread ready: ${d.thread.id}`))}>Message</button></div></article>)}{!profiles.length && <div className="empty-state">No Rishte profiles match these filters.</div>}</div></div><aside className="side-panel"><h2>Your Rishte listing</h2><form className="stack" onSubmit={save}><label className="toggle-row"><input type="checkbox" checked={edit.isActive} onChange={(e)=>setEdit({...edit,isActive:e.target.checked})}/>List me in Rishte</label><label>Headline<input value={edit.headline} onChange={(e)=>setEdit({...edit,headline:e.target.value})}/></label><label>About<textarea rows={4} value={edit.bio} onChange={(e)=>setEdit({...edit,bio:e.target.value})}/></label><label>Family note<textarea rows={3} value={edit.familyNote} onChange={(e)=>setEdit({...edit,familyNote:e.target.value})}/></label><label>Looking for<textarea rows={3} value={edit.lookingFor} onChange={(e)=>setEdit({...edit,lookingFor:e.target.value})}/></label><button>Save Rishte profile</button></form><hr/><h3>Incoming interests</h3>{interests.received.map((i:any)=><div className="request-row" key={i.id}><MemberLine member={i.member}/><span>{fmt(i.status)}</span>{i.status==="PENDING"&&<div className="button-row"><button onClick={()=>act(i.id,"ACCEPT")}>Accept</button><button className="ghost" onClick={()=>act(i.id,"DECLINE")}>Decline</button></div>}</div>)}{!interests.received.length&&<p className="muted">None yet.</p>}</aside></div></section>;
+}
+
+function Family({ me }: { me: Member }) {
+  const [data, setData] = useState<any>({ links: [], incomingAccess: [], outgoingAccess: [] }); const [directory, setDirectory] = useState<Member[]>([]); const [tree, setTree] = useState<any>(null); const [search, setSearch] = useState(""); const [error, setError] = useState(""); const [relative, setRelative] = useState({ relativeName: "", relation: "SIBLING", relationLabel: "" }); const [claim, setClaim] = useState("");
+  async function load() { try { const [family, members] = await Promise.all([api("/family/me"), api(`/directory${search ? `?q=${encodeURIComponent(search)}` : ""}`)]); setData(family); setDirectory(members.members); } catch(e){setError(e instanceof Error?e.message:"Could not load family");} }
+  useEffect(()=>{ load(); viewTree(me.id); },[]);
+  async function addRelative(e:FormEvent){e.preventDefault(); const r=await api("/family/members",{method:"POST",body:JSON.stringify(relative)}); setRelative({relativeName:"",relation:"SIBLING",relationLabel:""}); await load(); window.alert(`Family code: ${r.link.inviteCode}`);}
+  async function claimCode(e:FormEvent){e.preventDefault(); await api("/family/claim",{method:"POST",body:JSON.stringify({code:claim})});setClaim("");await load();await viewTree(me.id);}
+  async function requestAccess(id:string){await api(`/family/access/${id}`,{method:"POST"});await load();}
+  async function actAccess(id:string,action:string){await api(`/family/access/${id}`,{method:"PATCH",body:JSON.stringify({action})});await load();}
+  async function viewTree(id:string){try{setTree(await api(`/family/tree/${id}`));}catch(e){setError(e instanceof Error?e.message:"Tree unavailable");}}
+  return <section><div className="page-heading"><div><p className="eyebrow">FAMILY TREE</p><h1>Build the family graph</h1><p>Add relatives before or after they register. Verified connections become shared family links.</p></div><button onClick={()=>viewTree(me.id)}>View my tree</button></div>{error&&<p className="error">{error}</p>}<div className="family-layout"><div><section className="panel"><h2>Your family links</h2><div className="family-links">{data.links.map((l:any)=><article className="family-link" key={l.id}><div><strong>{l.owner.id===me.id?l.relativeName:l.owner.displayName}</strong><span>{fmt(l.relationLabel||l.relation)} · {fmt(l.status)}</span></div>{l.status==="INVITED"&&<code>{l.inviteCode}</code>}</article>)}{!data.links.length&&<p className="muted">No family links yet.</p>}</div><form className="inline-form" onSubmit={addRelative}><input placeholder="Relative's name" value={relative.relativeName} onChange={(e)=>setRelative({...relative,relativeName:e.target.value})} required/><select value={relative.relation} onChange={(e)=>setRelative({...relative,relation:e.target.value})}><option value="PARENT">Parent</option><option value="CHILD">Child</option><option value="SIBLING">Sibling</option><option value="SPOUSE">Spouse</option><option value="OTHER">Other</option></select><input placeholder="Label, e.g. Brother" value={relative.relationLabel} onChange={(e)=>setRelative({...relative,relationLabel:e.target.value})}/><button>Add</button></form><form className="inline-form compact" onSubmit={claimCode}><input placeholder="Enter family code" value={claim} onChange={(e)=>setClaim(e.target.value.toUpperCase())}/><button>Connect my account</button></form></section><section className="panel tree-panel"><div className="card-head"><h2>Tree viewer</h2>{tree&&<span>{tree.nodes.length} people</span>}</div>{tree?<><div className="tree-nodes">{tree.nodes.map((n:any)=><div className={n.registered?"tree-node":"tree-node guest"} key={n.id}><strong>{n.displayName}</strong><small>{n.registered?`@${n.username}`:"Not registered"}</small></div>)}</div><div className="edge-list">{tree.edges.map((e:any)=><div key={e.id}><span>{tree.nodes.find((n:any)=>n.id===e.from)?.displayName}</span><b>— {fmt(e.relationLabel||e.relation)} →</b><span>{tree.nodes.find((n:any)=>n.id===e.to)?.displayName}</span></div>)}</div></>:<p className="muted">Choose a tree to view.</p>}</section></div><aside className="side-panel"><h2>Find a family</h2><form className="search-row" onSubmit={(e)=>{e.preventDefault();load();}}><input placeholder="Search members" value={search} onChange={(e)=>setSearch(e.target.value)}/><button>Search</button></form>{directory.slice(0,20).map((m)=><div className="request-row" key={m.id}><MemberLine member={m}/><div className="button-row"><button className="ghost" onClick={()=>requestAccess(m.id)}>Request tree</button>{data.outgoingAccess.find((a:any)=>a.member.id===m.id)?.status==="APPROVED"&&<button onClick={()=>viewTree(m.id)}>View</button>}</div></div>)}<hr/><h3>Tree access requests</h3>{data.incomingAccess.map((a:any)=><div className="request-row" key={a.id}><MemberLine member={a.member}/><span>{fmt(a.status)}</span>{a.status==="PENDING"&&<div className="button-row"><button onClick={()=>actAccess(a.id,"APPROVE")}>Approve</button><button className="ghost" onClick={()=>actAccess(a.id,"DECLINE")}>Decline</button></div>}</div>)}{!data.incomingAccess.length&&<p className="muted">No pending requests.</p>}</aside></div></section>;
+}
+
+function Community({ me }: { me: Member }) {
+  const [posts,setPosts]=useState<any[]>([]);const [body,setBody]=useState("");const [error,setError]=useState("");
+  async function load(){try{setPosts((await api("/community/posts")).posts);}catch(e){setError(e instanceof Error?e.message:"Could not load community");}}
+  useEffect(()=>{load();},[]);
+  async function publish(e:FormEvent){e.preventDefault();await api("/community/posts",{method:"POST",body:JSON.stringify({body})});setBody("");await load();}
+  async function remove(id:string){await api(`/community/posts/${id}`,{method:"DELETE"});await load();}
+  return <section className="narrow-page"><div className="page-heading"><div><p className="eyebrow">COMMUNITY</p><h1>Community board</h1><p>Text updates, announcements and discussion. No media uploads.</p></div></div>{error&&<p className="error">{error}</p>}<form className="composer" onSubmit={publish}><textarea rows={4} placeholder="Share something with the community…" value={body} onChange={(e)=>setBody(e.target.value)} maxLength={2500}/><div><small>{body.length}/2500</small><button disabled={!body.trim()}>Post</button></div></form><div className="feed">{posts.map((p:any)=><article className="post" key={p.id}><div className="post-meta"><MemberLine member={p.author}/><time>{new Date(p.createdAt).toLocaleString()}</time></div><p>{p.body}</p>{p.author.id===me.id&&<button className="text-button danger" onClick={()=>remove(p.id)}>Delete</button>}</article>)}</div></section>;
+}
+
+function Messages({ me }: { me: Member }) {
+  const [threads,setThreads]=useState<any[]>([]);const [active,setActive]=useState<any>(null);const [members,setMembers]=useState<Member[]>([]);const [q,setQ]=useState("");const [text,setText]=useState("");
+  async function load(){const [t,d]=await Promise.all([api("/messages/threads"),api(`/directory${q?`?q=${encodeURIComponent(q)}`:""}`)]);setThreads(t.threads);setMembers(d.members);}
+  useEffect(()=>{load();},[]);
+  async function open(id:string){setActive(await api(`/messages/threads/${id}`));}
+  async function start(id:string){const d=await api(`/messages/threads/${id}`,{method:"POST"});await load();await open(d.thread.id);}
+  async function send(e:FormEvent){e.preventDefault();if(!active||!text.trim())return;await api(`/messages/threads/${active.id}/messages`,{method:"POST",body:JSON.stringify({body:text})});setText("");await open(active.id);await load();}
+  return <section><div className="page-heading"><div><p className="eyebrow">MESSAGES</p><h1>Private conversations</h1></div></div><div className="messages-layout"><aside className="thread-list"><h3>Conversations</h3>{threads.map((t:any)=><button className={active?.id===t.id?"thread active":"thread"} key={t.id} onClick={()=>open(t.id)}><MemberLine member={t.member}/>{t.lastMessage&&<small className="preview">{t.lastMessage.body}</small>}</button>)}<hr/><form className="search-row" onSubmit={(e)=>{e.preventDefault();load();}}><input placeholder="Find member" value={q} onChange={(e)=>setQ(e.target.value)}/><button>Find</button></form>{members.slice(0,8).map((m)=><button className="thread" key={m.id} onClick={()=>start(m.id)}><MemberLine member={m}/><small>Start conversation</small></button>)}</aside><div className="chat-panel">{active?<><div className="chat-head"><MemberLine member={active.member}/></div><div className="chat-log">{active.messages.map((m:any)=><div className={m.senderId===me.id?"bubble mine":"bubble"} key={m.id}><p>{m.body}</p><small>{new Date(m.createdAt).toLocaleString()}</small></div>)}</div><form className="chat-compose" onSubmit={send}><input placeholder="Write a message" value={text} onChange={(e)=>setText(e.target.value)}/><button>Send</button></form></>:<div className="empty-state">Choose a conversation or start a new one.</div>}</div></div></section>;
+}
+
+function Settings({ member, setMember }: { member: Member; setMember: (m: Member)=>void }) {
+  const [edit,setEdit]=useState({displayName:member.displayName,city:member.city||"",state:member.state||"",country:member.country||"India",gender:member.gender||"",dateOfBirth:member.dateOfBirth||"",education:member.education||"",occupation:member.occupation||"",about:member.about||"",languages:member.languages||"",interests:member.interests||"",isDirectoryVisible:member.isDirectoryVisible!==false});
+  const [aadhaar,setAadhaar]=useState({reference:"",name:member.displayName,last4:""});
+  async function save(e:FormEvent){e.preventDefault();const m=await api("/auth/me",{method:"PATCH",body:JSON.stringify({...edit,dateOfBirth:edit.dateOfBirth||undefined,gender:edit.gender||undefined,city:edit.city||undefined,state:edit.state||undefined})});setMember(m);window.alert("Profile saved");}
+  async function linkAadhaar(e:FormEvent){e.preventDefault();await api("/identity/aadhaar-dev",{method:"POST",body:JSON.stringify({reference:aadhaar.reference,name:aadhaar.name,last4:aadhaar.last4||undefined})});window.alert("Optional Aadhaar development reference linked");}
+  return <section className="narrow-page"><div className="page-heading"><div><p className="eyebrow">ACCOUNT</p><h1>Your community profile</h1></div></div><form className="panel stack" onSubmit={save}><div className="form-grid two"><label>Name<input value={edit.displayName} onChange={(e)=>setEdit({...edit,displayName:e.target.value})}/></label><label>Date of birth<input type="date" value={edit.dateOfBirth} onChange={(e)=>setEdit({...edit,dateOfBirth:e.target.value})}/></label><label>Gender<input value={edit.gender} onChange={(e)=>setEdit({...edit,gender:e.target.value})}/></label><label>City<input value={edit.city} onChange={(e)=>setEdit({...edit,city:e.target.value})}/></label><label>State<input value={edit.state} onChange={(e)=>setEdit({...edit,state:e.target.value})}/></label><label>Country<input value={edit.country} onChange={(e)=>setEdit({...edit,country:e.target.value})}/></label><label>Education<input value={edit.education} onChange={(e)=>setEdit({...edit,education:e.target.value})}/></label><label>Occupation<input value={edit.occupation} onChange={(e)=>setEdit({...edit,occupation:e.target.value})}/></label><label>Languages<input value={edit.languages} onChange={(e)=>setEdit({...edit,languages:e.target.value})}/></label><label>Interests<input value={edit.interests} onChange={(e)=>setEdit({...edit,interests:e.target.value})}/></label></div><label>About<textarea rows={5} value={edit.about} onChange={(e)=>setEdit({...edit,about:e.target.value})}/></label><label className="toggle-row"><input type="checkbox" checked={edit.isDirectoryVisible} onChange={(e)=>setEdit({...edit,isDirectoryVisible:e.target.checked})}/>Allow other registered members to find me in the community directory</label><button>Save account</button></form><form className="panel stack" onSubmit={linkAadhaar}><h2>Optional identity link</h2><p className="muted">Aadhaar is not required to use AbbasiConnect. This development adapter stores only a hashed reference and optional last four digits, never an image.</p><label>Development Aadhaar reference<input value={aadhaar.reference} onChange={(e)=>setAadhaar({...aadhaar,reference:e.target.value})}/></label><label>Name on identity<input value={aadhaar.name} onChange={(e)=>setAadhaar({...aadhaar,name:e.target.value})}/></label><label>Last four, optional<input maxLength={4} value={aadhaar.last4} onChange={(e)=>setAadhaar({...aadhaar,last4:e.target.value.replace(/\D/g,"").slice(0,4)})}/></label><button className="secondary">Link optional identity</button></form></section>;
 }
