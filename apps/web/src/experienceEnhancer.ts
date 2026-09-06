@@ -163,6 +163,17 @@ function enhanceHome() {
   void fillMessages(messagesBody);
 }
 
+function refreshDashboardFromRealtime(detail: any) {
+  const home = document.querySelector<HTMLElement>(".new-home");
+  if (!home || home.dataset.dashboardEnhanced !== "1") return;
+  const activity = home.querySelector<HTMLElement>(".dashboard-activity-list");
+  const summaries = home.querySelectorAll<HTMLElement>(".dashboard-summary-body");
+  if (detail?.type === "community" && activity) void fillCommunity(activity);
+  if (detail?.type === "family" && summaries[0]) void fillFamily(summaries[0]);
+  if (detail?.type === "rishte" && summaries[1]) void fillRishte(summaries[1]);
+  if (detail?.type === "messages" && summaries[2]) void fillMessages(summaries[2]);
+}
+
 function enhanceMessageUnlock() {
   const form = document.querySelector<HTMLFormElement>(".unlock-strip");
   if (!form || form.dataset.explained === "1") return;
@@ -191,4 +202,5 @@ export function installExperienceEnhancer() {
   run();
   const observer = new MutationObserver(run);
   observer.observe(document.documentElement, { childList: true, subtree: true });
+  window.addEventListener("abbasiconnect:realtime", (event) => refreshDashboardFromRealtime((event as CustomEvent).detail));
 }
