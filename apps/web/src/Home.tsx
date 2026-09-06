@@ -43,7 +43,7 @@ export default function Home({ member, open }: { member: Member; open: (module: 
   function waiting(type: string) { return errors[type] ? <p className="muted">This summary is temporarily unavailable.</p> : !summaries[type] ? <LoadingState label="Loading your overview…"/> : null; }
 
   return <div className="home-wrap">
-    <PageHeading icon="home" title={`Welcome, ${member.displayName}`} description="Your family, your connections, your community."><span className="home-account"><Avatar name={member.displayName} small/>@{member.username}</span></PageHeading>
+    <PageHeading icon="home" title={`Welcome, ${member.displayName}`} description="Your family, your connections, your community."><span className="home-account"><Avatar name={member.displayName} id={member.id} small/>@{member.username}</span></PageHeading>
     <div className="home-columns">
       <section className="home-activity panel">
         <div className="section-heading"><div><span className="section-kicker">From the community</span><h2>Recent conversations</h2></div><button className="text-button" onClick={() => open("community")}>View board <Icon name="arrow"/></button></div>

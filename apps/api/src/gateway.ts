@@ -1,4 +1,5 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
+import { handleMediaRequest } from "./media.js";
 
 const publicPort = Number(process.env.PORT ?? 3001);
 const internalPort = publicPort + 1;
@@ -203,6 +204,10 @@ function proxy(request: IncomingMessage, response: ServerResponse) {
 
 const gateway = http.createServer((request, response) => {
   const path = (request.url ?? "").split("?")[0];
+  if (path.startsWith("/media/")) {
+    void handleMediaRequest(request, response, internalPort, webOrigin, broadcast);
+    return;
+  }
   if (path === "/realtime/events") {
     void openEventStream(request, response);
     return;
