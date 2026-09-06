@@ -2,7 +2,9 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import AdminDashboard from "./AdminDashboard";
+import { installFamilyTreeEnhancer } from "./familyTreeEnhancer";
 import "./styles.css";
+import "./family-tree.css";
 import "./admin.css";
 
 const TOKEN_KEY = "abbasiconnect_token";
@@ -20,3 +22,5 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     {adminRoute ? <AdminDashboard onLogout={adminLogout} /> : <App />}
   </React.StrictMode>,
 );
+
+installFamilyTreeEnhancer();
