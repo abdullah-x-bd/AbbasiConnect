@@ -22,7 +22,7 @@ type StoredDeviceIdentity = {
 
 const PUBLIC_PREFIX = "abbasiconnect_e2ee_public_";
 const DEVICE_READY_PREFIX = "abbasiconnect_e2ee_device_ready_";
-const LEGACY_PRIVATE_PREFIX = "abbasiconnect_e2ee_private_";
+const SESSION_PRIVATE_PREFIX = "abbasiconnect_e2ee_private_";
 const DB_NAME = "abbasiconnect-crypto-v2";
 const DB_VERSION = 1;
 const STORE_NAME = "device-keys";
@@ -149,62 +149,102 @@ async function unwrapPrivateKey(bundle: KeyBundle, password: string) {
   }
 }
 
+const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
 async function uploadBundle(api: ApiFn, identity: { publicKey: string; encryptedPrivateKey: string; salt: string; iv: string; version: number }) {
-  await api("/crypto/me", {
-    method: "PUT",
-    body: JSON.stringify({
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await api("/crypto/me", {
+        method: "PUT",
+        body: JSON.stringify({
+          publicKey: identity.publicKey,
+          encryptedPrivateKey: identity.encryptedPrivateKey,
+          salt: identity.salt,
+          iv: identity.iv,
+          version: identity.version,
+        }),
+      });
+      const verified: KeyBundle = await api("/crypto/me");
+      if (verified.publicKey !== identity.publicKey) throw new Error("Server did not retain the encryption public key");
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) await wait(350 * (attempt + 1));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Could not publish secure messaging key");
+}
+
+async function rememberPrivateKey(
+  userId: string,
+  privateKey: CryptoKey,
+  privateJwk: string,
+  identity: { publicKey: string; encryptedPrivateKey?: string; salt?: string; iv?: string; version?: number },
+) {
+  try {
+    await storeDeviceIdentity({
+      userId,
+      privateKey,
       publicKey: identity.publicKey,
       encryptedPrivateKey: identity.encryptedPrivateKey,
       salt: identity.salt,
       iv: identity.iv,
       version: identity.version,
-    }),
-  });
+      savedAt: Date.now(),
+    });
+    sessionStorage.removeItem(`${SESSION_PRIVATE_PREFIX}${userId}`);
+  } catch {
+    // Some browsers/private modes can refuse to structured-clone CryptoKey into IndexedDB.
+    // Keep the already password-unwrapped key only for this tab session instead of
+    // blocking E2EE registration entirely.
+    sessionStorage.setItem(`${SESSION_PRIVATE_PREFIX}${userId}`, privateJwk);
+    localStorage.setItem(`${DEVICE_READY_PREFIX}${userId}`, "session");
+    localStorage.setItem(`${PUBLIC_PREFIX}${userId}`, identity.publicKey);
+  }
 }
 
 async function installFreshIdentity(api: ApiFn, password: string, userId: string) {
   const identity = await createIdentity(password);
   const privateKey = await importPrivateJwk(identity.privateJwk);
 
-  // Save the full recovery payload locally before publishing it. If the network
-  // request fails, the next normal sign-in can safely retry the same key bundle.
-  await storeDeviceIdentity({
-    userId,
-    privateKey,
-    publicKey: identity.publicKey,
-    encryptedPrivateKey: identity.encryptedPrivateKey,
-    salt: identity.salt,
-    iv: identity.iv,
-    version: identity.version,
-    savedAt: Date.now(),
-  });
+  // Public registration must not depend on whether this particular browser can
+  // persist a CryptoKey object. Publish and verify first, then persist locally.
   await uploadBundle(api, identity);
+  await rememberPrivateKey(userId, privateKey, identity.privateJwk, identity);
   return { ready: true, created: true, trustedDevice: true };
 }
 
-async function migrateLegacySessionKey(userId: string) {
-  const legacy = sessionStorage.getItem(`${LEGACY_PRIVATE_PREFIX}${userId}`);
-  if (!legacy) return null;
-  const privateKey = await importPrivateJwk(legacy);
-  sessionStorage.removeItem(`${LEGACY_PRIVATE_PREFIX}${userId}`);
-  return privateKey;
+async function readSessionPrivateKey(userId: string) {
+  const privateJwk = sessionStorage.getItem(`${SESSION_PRIVATE_PREFIX}${userId}`);
+  if (!privateJwk) return null;
+  try {
+    return { privateJwk, privateKey: await importPrivateJwk(privateJwk) };
+  } catch {
+    sessionStorage.removeItem(`${SESSION_PRIVATE_PREFIX}${userId}`);
+    return null;
+  }
 }
 
 export async function prepareSecureMessaging(api: ApiFn, password: string, userId: string) {
-  const [bundle, stored] = await Promise.all([
+  const [bundle, stored, session] = await Promise.all([
     api("/crypto/me") as Promise<KeyBundle>,
     readDeviceIdentity(userId).catch(() => null),
+    readSessionPrivateKey(userId).catch(() => null),
   ]);
 
-  // A fully matching trusted device is already ready.
-  if (stored?.publicKey && bundle.publicKey && stored.publicKey === bundle.publicKey) {
+  if (bundle.publicKey && stored?.publicKey === bundle.publicKey) {
     localStorage.setItem(`${DEVICE_READY_PREFIX}${userId}`, "1");
     localStorage.setItem(`${PUBLIC_PREFIX}${userId}`, bundle.publicKey);
     return { ready: true, created: false, trustedDevice: true };
   }
 
-  // A previous publication may have failed after the browser saved its key.
-  // Retry the exact same key bundle rather than generating a different identity.
+  if (bundle.publicKey && session) {
+    localStorage.setItem(`${DEVICE_READY_PREFIX}${userId}`, "session");
+    localStorage.setItem(`${PUBLIC_PREFIX}${userId}`, bundle.publicKey);
+    return { ready: true, created: false, trustedDevice: true };
+  }
+
   if (!bundle.publicKey && stored?.publicKey && stored.encryptedPrivateKey && stored.salt && stored.iv && stored.version) {
     await uploadBundle(api, {
       publicKey: stored.publicKey,
@@ -221,34 +261,21 @@ export async function prepareSecureMessaging(api: ApiFn, password: string, userI
     try {
       const privateJwk = await unwrapPrivateKey(bundle, password);
       const privateKey = await importPrivateJwk(privateJwk);
-      await storeDeviceIdentity({
-        userId,
-        privateKey,
+      await rememberPrivateKey(userId, privateKey, privateJwk, {
         publicKey: bundle.publicKey,
         encryptedPrivateKey: bundle.encryptedPrivateKey || undefined,
         salt: bundle.salt || undefined,
         iv: bundle.iv || undefined,
         version: bundle.version || 1,
-        savedAt: Date.now(),
       });
       return { ready: true, created: false, trustedDevice: true };
     } catch (error) {
-      // The two seeded demo accounts had their passwords renamed during development.
-      // They contain only the original unencrypted demo message, so rotating their
-      // test encryption identity is safe and prevents the old password wrapping from
-      // permanently blocking secure setup.
       const me = await api("/auth/me").catch(() => null);
       if (me?.username === "user1" || me?.username === "user2") {
         return installFreshIdentity(api, password, userId);
       }
       throw error;
     }
-  }
-
-  const legacy = await migrateLegacySessionKey(userId).catch(() => null);
-  if (legacy && bundle.publicKey) {
-    await storeDeviceIdentity({ userId, privateKey: legacy, publicKey: bundle.publicKey, savedAt: Date.now() });
-    return { ready: true, created: false, trustedDevice: true };
   }
 
   return installFreshIdentity(api, password, userId);
@@ -286,8 +313,8 @@ async function importPublicKey(publicKey: string) {
 async function getDevicePrivateKey(userId: string) {
   const stored = await readDeviceIdentity(userId).catch(() => null);
   if (stored?.privateKey) return stored.privateKey;
-  const migrated = await migrateLegacySessionKey(userId).catch(() => null);
-  if (migrated) return migrated;
+  const session = await readSessionPrivateKey(userId).catch(() => null);
+  if (session?.privateKey) return session.privateKey;
   localStorage.removeItem(`${DEVICE_READY_PREFIX}${userId}`);
   throw new Error("This browser has not been provisioned for secure messaging yet. Sign out and sign in once on this browser.");
 }
