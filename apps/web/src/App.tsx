@@ -7,6 +7,7 @@ import {
   secureMessagingUnlocked,
   unlockSecureMessaging,
 } from "./e2ee";
+import { onRealtime, stopRealtimeConnection, syncRealtimeConnection } from "./realtime";
 
 type Member = {
   id: string;
@@ -91,9 +92,15 @@ export default function App() {
     api("/auth/session")
       .then((data) => {
         if (data.mode === "admin") window.location.replace(`${BASE_URL}?admin=1`);
-        else setMember(data.user);
+        else {
+          setMember(data.user);
+          syncRealtimeConnection();
+        }
       })
-      .catch(() => localStorage.removeItem(TOKEN_KEY))
+      .catch(() => {
+        localStorage.removeItem(TOKEN_KEY);
+        stopRealtimeConnection();
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -109,6 +116,7 @@ export default function App() {
       if (data.mode === "admin") return window.location.assign(`${BASE_URL}?admin=1`);
       setMember(data.user);
       setModule("home");
+      syncRealtimeConnection();
       prepareSecureMessaging(api, login.password, data.user.id).catch(() => undefined);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Sign in failed");
@@ -156,6 +164,7 @@ export default function App() {
       localStorage.setItem(TOKEN_KEY, data.token);
       setMember(data.user);
       setModule("home");
+      syncRealtimeConnection();
       await prepareSecureMessaging(api, register.password, data.user.id).catch(() => undefined);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Registration failed");
@@ -163,6 +172,7 @@ export default function App() {
   }
 
   function logout() {
+    stopRealtimeConnection();
     localStorage.removeItem(TOKEN_KEY);
     setMember(null);
     setModule("home");
@@ -279,7 +289,7 @@ function Rishte({ me }: { me: Member }) {
   const [editing, setEditing] = useState(false);
   const [edit, setEdit] = useState({ isActive: true, headline: "", bio: "", familyNote: "", lookingFor: "" });
 
-  async function load() {
+  async function load(refreshEdit = true) {
     try {
       const params = new URLSearchParams();
       Object.entries(filter).forEach(([key, value]) => value && params.set(key, value));
@@ -290,7 +300,7 @@ function Rishte({ me }: { me: Member }) {
       ]);
       setProfiles(a.profiles);
       setMine(b.profile);
-      if (b.profile) setEdit({ isActive: b.profile.isActive, headline: b.profile.headline, bio: b.profile.bio, familyNote: b.profile.familyNote, lookingFor: b.profile.lookingFor });
+      if (b.profile && refreshEdit) setEdit({ isActive: b.profile.isActive, headline: b.profile.headline, bio: b.profile.bio, familyNote: b.profile.familyNote, lookingFor: b.profile.lookingFor });
       setInterests(c);
       setError("");
     } catch (e) {
@@ -298,7 +308,8 @@ function Rishte({ me }: { me: Member }) {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, []);
+  useEffect(() => onRealtime((detail) => { if (detail?.type === "rishte") void load(false); }), [filter.q, filter.city, filter.gender]);
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -337,7 +348,7 @@ function Rishte({ me }: { me: Member }) {
       {error && <p className="error">{error}</p>}
       <div className="split-layout">
         <div>
-          <form className="filters" onSubmit={(e) => { e.preventDefault(); load(); }}>
+          <form className="filters" onSubmit={(e) => { e.preventDefault(); void load(); }}>
             <input placeholder="Name, education or occupation" value={filter.q} onChange={(e) => setFilter({ ...filter, q: e.target.value })} />
             <input placeholder="City" value={filter.city} onChange={(e) => setFilter({ ...filter, city: e.target.value })} />
             <select value={filter.gender} onChange={(e) => setFilter({ ...filter, gender: e.target.value })}><option value="">Any gender</option><option>Male</option><option>Female</option><option>Other</option></select>
@@ -433,7 +444,13 @@ function Family({ me }: { me: Member }) {
     }
   }
 
-  useEffect(() => { loadFamily(); viewTree(me.id); }, []);
+  useEffect(() => { void loadFamily(); void viewTree(me.id); }, []);
+  useEffect(() => onRealtime((detail) => {
+    if (detail?.type !== "family") return;
+    void loadFamily();
+    void viewTree(me.id);
+    if (searched && search.trim().length >= 2) void searchFamilies();
+  }), [me.id, searched, search]);
 
   async function addRelative(event: FormEvent) {
     event.preventDefault();
@@ -516,7 +533,8 @@ function Community({ me }: { me: Member }) {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, []);
+  useEffect(() => onRealtime((detail) => { if (detail?.type === "community") void load(); }), []);
 
   async function publish(event: FormEvent) {
     event.preventDefault();
@@ -600,7 +618,12 @@ function Messages({ me }: { me: Member }) {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, []);
+  useEffect(() => onRealtime((detail) => {
+    if (detail?.type !== "messages") return;
+    void load();
+    if (active?.id) void open(active.id);
+  }), [active?.id]);
 
   async function findMembers(event: FormEvent) {
     event.preventDefault();
