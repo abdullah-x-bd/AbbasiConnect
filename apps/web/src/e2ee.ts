@@ -90,7 +90,7 @@ export async function prepareSecureMessaging(api: ApiFn, password: string, userI
   const bundle: KeyBundle = await api("/crypto/me");
   if (bundle.configured) {
     const privateKey = await unwrapPrivateKey(bundle, password);
-    localStorage.setItem(`${PRIVATE_PREFIX}${userId}`, privateKey);
+    sessionStorage.setItem(`${PRIVATE_PREFIX}${userId}`, privateKey);
     if (bundle.publicKey) localStorage.setItem(`${PUBLIC_PREFIX}${userId}`, bundle.publicKey);
     return { ready: true, created: false };
   }
@@ -106,7 +106,7 @@ export async function prepareSecureMessaging(api: ApiFn, password: string, userI
       version: identity.version,
     }),
   });
-  localStorage.setItem(`${PRIVATE_PREFIX}${userId}`, identity.privateKey);
+  sessionStorage.setItem(`${PRIVATE_PREFIX}${userId}`, identity.privateKey);
   localStorage.setItem(`${PUBLIC_PREFIX}${userId}`, identity.publicKey);
   return { ready: true, created: true };
 }
@@ -116,7 +116,7 @@ export async function unlockSecureMessaging(api: ApiFn, password: string, userId
 }
 
 export function secureMessagingUnlocked(userId: string) {
-  return Boolean(localStorage.getItem(`${PRIVATE_PREFIX}${userId}`));
+  return Boolean(sessionStorage.getItem(`${PRIVATE_PREFIX}${userId}`));
 }
 
 export async function myPublicKey(api: ApiFn, userId: string) {
@@ -169,7 +169,7 @@ export async function encryptMessage(text: string, senderPublicKey: string, reci
 
 export async function decryptMessage(message: any, userId: string) {
   if (!message.encrypted) return message.body || "";
-  const privateJwk = localStorage.getItem(`${PRIVATE_PREFIX}${userId}`);
+  const privateJwk = sessionStorage.getItem(`${PRIVATE_PREFIX}${userId}`);
   if (!privateJwk) throw new Error("Secure messages are locked");
   if (!message.wrappedKey || !message.ciphertext || !message.iv) throw new Error("Encrypted message is incomplete");
   const privateKey = await importPrivateKey(privateJwk);
