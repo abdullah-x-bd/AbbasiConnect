@@ -13,6 +13,12 @@ process.env.PORT = String(publicPort);
 
 const liveClients = new Set<ServerResponse>();
 
+type InternalResult = {
+  ok: boolean;
+  status: number;
+  data: any;
+};
+
 function corsHeaders() {
   return {
     "access-control-allow-origin": webOrigin,
@@ -49,34 +55,40 @@ function broadcast(type: string) {
   }
 }
 
-function verifyMember(authorization: string | undefined) {
-  return new Promise<boolean>((resolve) => {
-    if (!authorization?.startsWith("Bearer ")) return resolve(false);
+function internalJson(path: string, authorization: string | undefined) {
+  return new Promise<InternalResult>((resolve) => {
     const request = http.request(
       {
         hostname: "127.0.0.1",
         port: internalPort,
-        path: "/auth/session",
+        path,
         method: "GET",
-        headers: { authorization },
+        headers: authorization ? { authorization } : {},
       },
       (response) => {
         let body = "";
         response.setEncoding("utf8");
         response.on("data", (chunk) => { body += chunk; });
         response.on("end", () => {
-          if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) return resolve(false);
+          const status = response.statusCode ?? 500;
           try {
-            resolve(JSON.parse(body)?.mode === "member");
+            resolve({ ok: status >= 200 && status < 300, status, data: body ? JSON.parse(body) : {} });
           } catch {
-            resolve(false);
+            resolve({ ok: false, status, data: {} });
           }
         });
       },
     );
-    request.on("error", () => resolve(false));
+    request.on("error", () => resolve({ ok: false, status: 503, data: {} }));
     request.end();
   });
+}
+
+async function memberSession(authorization: string | undefined) {
+  if (!authorization?.startsWith("Bearer ")) return null;
+  const result = await internalJson("/auth/session", authorization);
+  if (!result.ok || result.data?.mode !== "member" || !result.data?.user?.id) return null;
+  return result.data;
 }
 
 async function openEventStream(request: IncomingMessage, response: ServerResponse) {
@@ -85,7 +97,7 @@ async function openEventStream(request: IncomingMessage, response: ServerRespons
     response.end();
     return;
   }
-  if (request.method !== "GET" || !await verifyMember(request.headers.authorization)) {
+  if (request.method !== "GET" || !await memberSession(request.headers.authorization)) {
     response.writeHead(401, { ...corsHeaders(), "content-type": "application/json" });
     response.end(JSON.stringify({ error: "Member sign-in required" }));
     return;
@@ -112,6 +124,54 @@ async function openEventStream(request: IncomingMessage, response: ServerRespons
   };
   request.on("close", cleanup);
   response.on("close", cleanup);
+}
+
+async function openPerformanceBootstrap(request: IncomingMessage, response: ServerResponse) {
+  if (request.method === "OPTIONS") {
+    response.writeHead(204, corsHeaders());
+    response.end();
+    return;
+  }
+  if (request.method !== "GET") {
+    response.writeHead(405, { ...corsHeaders(), "content-type": "application/json" });
+    response.end(JSON.stringify({ error: "Method not allowed" }));
+    return;
+  }
+
+  const authorization = request.headers.authorization;
+  const session = await memberSession(authorization);
+  if (!session) {
+    response.writeHead(401, { ...corsHeaders(), "content-type": "application/json" });
+    response.end(JSON.stringify({ error: "Member sign-in required" }));
+    return;
+  }
+
+  const userId = session.user.id;
+  const paths = {
+    communityFeed: "/community/feed",
+    messageThreads: "/messages-secure/threads",
+    family: "/family/me",
+    rishteMine: "/rishte/me",
+    rishteProfiles: "/rishte",
+    rishteInterests: "/rishte/interests",
+    familyTree: `/family/tree/${userId}`,
+  } as const;
+
+  const entries = await Promise.all(
+    Object.entries(paths).map(async ([key, path]) => [key, await internalJson(path, authorization)] as const),
+  );
+
+  const payload: Record<string, any> = { userId, session };
+  for (const [key, result] of entries) {
+    if (result.ok) payload[key] = result.data;
+  }
+
+  response.writeHead(200, {
+    ...corsHeaders(),
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  response.end(JSON.stringify(payload));
 }
 
 function proxy(request: IncomingMessage, response: ServerResponse) {
@@ -145,6 +205,10 @@ const gateway = http.createServer((request, response) => {
   const path = (request.url ?? "").split("?")[0];
   if (path === "/realtime/events") {
     void openEventStream(request, response);
+    return;
+  }
+  if (path === "/performance/bootstrap") {
+    void openPerformanceBootstrap(request, response);
     return;
   }
   proxy(request, response);
