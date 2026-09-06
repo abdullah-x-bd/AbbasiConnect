@@ -92,6 +92,7 @@ model User {
   about           String    @default("") @db.VarChar(1500)
   languages       String    @default("") @db.VarChar(300)
   interests       String    @default("") @db.VarChar(500)
+  profileImageData String?   @db.Text
 
   profileCreatedBy String   @default("SELF") @db.VarChar(32)
   familyDetails   String    @default("") @db.VarChar(1200)
@@ -246,6 +247,7 @@ model Post {
   id        String   @id @default(uuid())
   authorId  String
   body      String   @db.VarChar(2500)
+  imageData String?   @db.Text
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

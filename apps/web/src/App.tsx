@@ -10,7 +10,7 @@ import {
 import { onRealtime, stopRealtimeConnection, syncRealtimeConnection } from "./realtime";
 import Home from "./Home";
 import FamilyTree from "./FamilyTree";
-import { Avatar, BrandMark, EmptyState, Icon, LoadingState, Notice, PageHeading, useAction, type IconName } from "./ui";
+import { Avatar, BrandMark, EmptyState, Icon, LoadingState, Notice, PageHeading, PostImage, prepareImage, profileImageUpdated, useAction, type IconName } from "./ui";
 
 export type Member = {
   id: string;
@@ -61,7 +61,7 @@ function fmt(value?: string | null) {
 function MemberLine({ member }: { member: Member }) {
   return (
     <div className="member-line">
-      <Avatar name={member.displayName}/>
+      <Avatar name={member.displayName} id={member.id}/>
       <div className="member-copy"><strong>{member.displayName}</strong>
       <span>@{member.username}</span>
       <small>{[member.age ? `${member.age} yrs` : "", member.occupation, member.city].filter(Boolean).join(" · ")}</small></div>
@@ -253,7 +253,7 @@ export default function App() {
     <header className="topbar"><div className="topbar-inner">
       <button className="brand-button" aria-label="AbbasiConnect home" onClick={() => setModule("home")}><BrandMark/><span>AbbasiConnect</span></button>
       <nav className="main-nav" aria-label="Main navigation">{navigation.map(item => <button key={item.id} className={module === item.id ? "active" : ""} aria-current={module === item.id ? "page" : undefined} onClick={() => setModule(item.id)}><Icon name={item.icon}/><span>{item.label}</span></button>)}</nav>
-      <div className="top-member"><Avatar name={member.displayName} small/><span><strong>{member.displayName}</strong><small>@{member.username}</small></span></div>
+      <div className="top-member"><Avatar name={member.displayName} id={member.id} small/><span><strong>{member.displayName}</strong><small>@{member.username}</small></span></div>
       <div className="account-actions"><button className={`header-action ${module === "settings" ? "active" : ""}`} aria-current={module === "settings" ? "page" : undefined} onClick={() => setModule("settings")}><Icon name="account"/><span>Account</span></button><button className="header-action" onClick={logout}><Icon name="logout"/><span>Log out</span></button></div>
     </div></header>
     <main id="main-content" tabIndex={-1}>
@@ -501,6 +501,7 @@ function Community({ me }: { me: Member }) {
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState("");
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const [postImage, setPostImage] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -514,11 +515,19 @@ function Community({ me }: { me: Member }) {
   useEffect(() => { void load(); }, []);
   useEffect(() => onRealtime((detail) => { if (detail?.type === "community") void load(); }), []);
 
+  async function choosePostImage(file?: File) {
+    if (!file) return;
+    setPostImage(await prepareImage(file));
+    setError("");
+  }
+
   async function publish(event: FormEvent) {
     event.preventDefault();
-    if (!body.trim()) return;
-    await api("/community/posts", { method: "POST", body: JSON.stringify({ body }) });
+    if (!body.trim() && !postImage) return;
+    if (postImage) await api("/media/posts", { method: "POST", body: JSON.stringify({ body: body.trim(), dataUrl: postImage }) });
+    else await api("/community/posts", { method: "POST", body: JSON.stringify({ body }) });
     setBody("");
+    setPostImage(null);
     await load();
   }
 
@@ -542,7 +551,7 @@ function Community({ me }: { me: Member }) {
   }
 
   async function share(post: any) {
-    const text = `${post.author.displayName}: ${post.body}`;
+    const text = post.body ? `${post.author.displayName}: ${post.body}` : `${post.author.displayName} shared a photo on AbbasiConnect.`;
     if (navigator.share) {
       await navigator.share({ title: "AbbasiConnect", text });
       return;
@@ -555,16 +564,16 @@ function Community({ me }: { me: Member }) {
     <section className="narrow-page community-page">
       <PageHeading icon="community" title="Community board" description="Updates, conversations, and everyday connections."/>
       <Notice>{error}</Notice><Notice kind="success">{feedback}</Notice>
-      <form className="composer" onSubmit={event => { event.preventDefault(); void perform(() => publish(event)); }} aria-busy={working}><div className="composer-header"><Avatar name={me.displayName} small/><strong>What would you like to share?</strong></div><label><span className="sr-only">Write an update</span><textarea rows={3} placeholder="Share a thought or an update with the community…" value={body} onChange={e => setBody(e.target.value)} maxLength={2500}/></label><div className="composer-footer"><small>{body.length} / 2500</small><button disabled={!body.trim() || working}><Icon name="plus"/>{working ? "Please wait…" : "Post update"}</button></div></form>
+      <form className="composer" onSubmit={event => { event.preventDefault(); void perform(() => publish(event)); }} aria-busy={working}><div className="composer-header"><Avatar name={me.displayName} id={me.id} small/><strong>What would you like to share?</strong></div><label><span className="sr-only">Write an update</span><textarea rows={3} placeholder="Share a thought, an update, or a photo with the community…" value={body} onChange={e => setBody(e.target.value)} maxLength={2500}/></label>{postImage && <div className="composer-image-wrap"><img className="composer-image-preview" src={postImage} alt="Selected post"/><button type="button" className="image-remove" aria-label="Remove selected image" onClick={() => setPostImage(null)}><Icon name="close"/></button></div>}<div className="composer-footer"><div className="composer-media"><label className="image-upload"><Icon name="image"/>Add photo<input type="file" accept="image/jpeg,image/png,image/webp" onChange={e => { const file = e.target.files?.[0]; if (file) void perform(() => choosePostImage(file)); e.target.value = ""; }}/></label><small>{body.length} / 2500</small></div><button disabled={(!body.trim() && !postImage) || working}><Icon name="plus"/>{working ? "Please wait…" : "Post update"}</button></div></form>
       <div className="feed-heading"><h2>Latest from the community</h2></div>
       {loading && <LoadingState label="Loading community updates…"/>}
       {!loading && !error && !posts.length && <EmptyState icon="community" title="Start the conversation">Your community updates will appear here.</EmptyState>}
       <div className="feed" aria-busy={loading}>
         {posts.map((post: any) => <article className="post" key={post.id}>
-          <div className="post-meta"><MemberLine member={post.author}/><time dateTime={post.createdAt}>{new Date(post.createdAt).toLocaleString()}</time></div><p dir="auto">{post.body}</p>
+          <div className="post-meta"><MemberLine member={post.author}/><time dateTime={post.createdAt}>{new Date(post.createdAt).toLocaleString()}</time></div>{post.body && <p dir="auto">{post.body}</p>}<PostImage postId={post.id} alt={`Photo shared by ${post.author.displayName}`}/>
           <div className="post-actions"><button className={post.likedByMe ? "post-action active" : "post-action"} aria-pressed={post.likedByMe} disabled={working} onClick={() => void perform(() => like(post.id))}><Icon name="heart"/>Like{post.likeCount ? ` ${post.likeCount}` : ""}</button><button className="post-action" onClick={() => document.getElementById(`comment-${post.id}`)?.focus()}><Icon name="messages"/>Comment{post.commentCount ? ` ${post.commentCount}` : ""}</button><button className="post-action" onClick={() => void perform(() => share(post))}><Icon name="share"/>Share</button>{post.author.id === me.id && <button className="post-action danger-link" disabled={working} onClick={() => void perform(() => remove(post.id))}>Delete</button>}</div>
-          {post.comments.length > 0 && <div className="comments">{post.comments.map((item: any) => <div className="comment" key={item.id}><Avatar name={item.author.displayName} small/><div><strong>{item.author.displayName}</strong><p dir="auto">{item.body}</p></div></div>)}</div>}
-          <form className="comment-form" onSubmit={event => { event.preventDefault(); void perform(() => comment(event, post.id)); }}><Avatar name={me.displayName} small/><input aria-label={`Comment on ${post.author.displayName}'s post`} id={`comment-${post.id}`} placeholder="Write a comment…" value={commentDrafts[post.id] || ""} onChange={e => setCommentDrafts(current => ({ ...current, [post.id]: e.target.value }))}/><button className="secondary" disabled={!commentDrafts[post.id]?.trim() || working}>Post</button></form>
+          {post.comments.length > 0 && <div className="comments">{post.comments.map((item: any) => <div className="comment" key={item.id}><Avatar name={item.author.displayName} id={item.author.id} small/><div><strong>{item.author.displayName}</strong><p dir="auto">{item.body}</p></div></div>)}</div>}
+          <form className="comment-form" onSubmit={event => { event.preventDefault(); void perform(() => comment(event, post.id)); }}><Avatar name={me.displayName} id={me.id} small/><input aria-label={`Comment on ${post.author.displayName}'s post`} id={`comment-${post.id}`} placeholder="Write a comment…" value={commentDrafts[post.id] || ""} onChange={e => setCommentDrafts(current => ({ ...current, [post.id]: e.target.value }))}/><button className="secondary" disabled={!commentDrafts[post.id]?.trim() || working}>Post</button></form>
         </article>)}
       </div>
     </section>
@@ -731,6 +740,7 @@ function Settings({ member, setMember }: { member: Member; setMember: (member: M
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
   const { working, perform } = useAction(setError);
+  const [profileImage, setProfileImage] = useState<string | null | undefined>(undefined);
   const [edit, setEdit] = useState({
     displayName: member.displayName,
     city: member.city || "",
@@ -746,13 +756,25 @@ function Settings({ member, setMember }: { member: Member; setMember: (member: M
     isDirectoryVisible: member.isDirectoryVisible !== false,
   });
 
+  async function chooseProfileImage(file?: File) {
+    if (!file) return;
+    setProfileImage(await prepareImage(file, 512, .82));
+    setFeedback("Photo selected. Save changes to apply it.");
+  }
+
   async function save(event: FormEvent) {
     event.preventDefault();
     const updated = await api("/auth/me", {
       method: "PATCH",
       body: JSON.stringify({ ...edit, dateOfBirth: edit.dateOfBirth || undefined, gender: edit.gender || undefined, city: edit.city || undefined, state: edit.state || undefined }),
     });
+    if (profileImage !== undefined) {
+      if (profileImage) await api("/media/profile", { method: "PUT", body: JSON.stringify({ dataUrl: profileImage }) });
+      else await api("/media/profile", { method: "DELETE" });
+      profileImageUpdated(member.id);
+    }
     setMember(updated);
+    setProfileImage(undefined);
     setError("");
     setFeedback("Your profile has been saved.");
   }
@@ -761,7 +783,7 @@ function Settings({ member, setMember }: { member: Member; setMember: (member: M
     <PageHeading icon="account" title="Your account" description="The details that help your community know you."/>
     <Notice>{error}</Notice>
     <form className="panel account-form" onSubmit={event => { event.preventDefault(); void perform(() => save(event)); }} aria-busy={working}>
-      <div className="account-identity"><Avatar name={member.displayName}/><div><h2>{member.displayName}</h2><p>@{member.username}</p></div></div>
+      <div className="account-identity profile-photo-row"><Avatar name={member.displayName} id={member.id} preview={profileImage}/><div><h2>{member.displayName}</h2><p>@{member.username}</p></div><div className="profile-photo-actions"><label className="image-upload"><Icon name="image"/>Change photo<input type="file" accept="image/jpeg,image/png,image/webp" onChange={e => { const file = e.target.files?.[0]; if (file) void perform(() => chooseProfileImage(file)); e.target.value = ""; }}/></label><button type="button" className="text-button" onClick={() => { setProfileImage(null); setFeedback("Photo will be removed when you save changes."); }}>Remove photo</button></div></div>
       <section className="form-section"><h2>Personal details</h2><p>Your name and a little about you.</p><div className="form-grid two">
         <label>Name<input autoComplete="name" value={edit.displayName} onChange={e => setEdit({ ...edit, displayName: e.target.value })}/></label>
         <label>Date of birth<input type="date" autoComplete="bday" value={edit.dateOfBirth} onChange={e => setEdit({ ...edit, dateOfBirth: e.target.value })}/></label>

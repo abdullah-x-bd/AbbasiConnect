@@ -5,6 +5,7 @@ import { installPerformanceLayer } from "./performance";
 import "./styles.css";
 import "./family-tree.css";
 import "./admin.css";
+import "./media.css";
 
 const AdminDashboard = React.lazy(() => import("./AdminDashboard"));
 const TOKEN_KEY = "abbasiconnect_token";

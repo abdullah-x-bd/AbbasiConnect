@@ -1,0 +1,22 @@
+.avatar { overflow: hidden; position: relative; }
+.avatar > img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.image-upload { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; color: var(--teal); background: var(--paper); font-size: .875rem; font-weight: 600; cursor: pointer; }
+.image-upload:hover { border-color: #8ca5af; background: #f3f8f9; }
+.image-upload .icon { width: 18px; height: 18px; }
+.image-upload input[type="file"] { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.composer-media { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.composer-image-wrap { position: relative; margin: 4px 0 14px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: #eef3f5; }
+.composer-image-preview { display: block; width: 100%; max-height: 430px; object-fit: contain; }
+.image-remove { position: absolute; top: 10px; right: 10px; width: 38px; min-height: 38px; padding: 8px; border-radius: 999px; background: #152e40d9; color: #fff; }
+.image-remove:hover { background: #152e40; }
+.post-image { display: block; width: 100%; max-height: 680px; margin: 14px 0 4px; border-radius: 11px; object-fit: contain; background: #eef3f5; }
+.profile-photo-row { gap: 16px; flex-wrap: wrap; }
+.profile-photo-row > .avatar { width: 72px; height: 72px; flex: 0 0 72px; font-size: 1.25rem; }
+.profile-photo-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .composer-footer { align-items: flex-end; gap: 10px; }
+  .composer-media { align-items: flex-start; flex-direction: column; gap: 6px; }
+  .profile-photo-actions { width: 100%; margin-left: 0; }
+  .profile-photo-actions .image-upload, .profile-photo-actions button { flex: 1; }
+  .post-image { max-height: 520px; }
+}

@@ -1,6 +1,6 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
-export type IconName = "home" | "rishte" | "family" | "community" | "messages" | "account" | "logout" | "arrow" | "back" | "search" | "plus" | "check" | "lock" | "heart" | "share" | "send" | "edit" | "shield" | "close";
+export type IconName = "home" | "rishte" | "family" | "community" | "messages" | "account" | "logout" | "arrow" | "back" | "search" | "plus" | "check" | "lock" | "heart" | "share" | "send" | "edit" | "shield" | "close" | "image";
 
 const paths: Record<IconName, ReactNode> = {
   home: <><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z" /></>,
@@ -22,6 +22,7 @@ const paths: Record<IconName, ReactNode> = {
   edit: <><path d="m15 4 5 5M4 20l5-1L21 7a2 2 0 0 0-5-5L4 14v6ZM14 20h7"/></>,
   shield: <><path d="m12 2 9 4v6c0 5-9 10-9 10S3 17 3 12V6l9-4Z"/><path d="m8 12 3 3 5-6"/></>,
   close: <path d="m6 6 12 12M6 18 18 6"/>,
+  image: <><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 15-5-5L5 20"/></>,
 };
 
 export function Icon({ name, className = "" }: { name: IconName; className?: string }) {
@@ -32,9 +33,103 @@ export function BrandMark() {
   return <svg className="brand-mark" viewBox="0 0 36 36" fill="none" aria-hidden="true"><rect x="5.5" y="5.5" width="25" height="25" rx="7" stroke="currentColor" strokeWidth="2"/><path d="M11 25 18 10l7 15M14 20h8" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/></svg>;
 }
 
-export function Avatar({ name, small = false }: { name: string; small?: boolean }) {
+const TOKEN_KEY = "abbasiconnect_token";
+const API_URL = import.meta.env.VITE_API_URL ?? "/api";
+const PROFILE_IMAGE_EVENT = "abbasiconnect:profile-image-updated";
+const profileImageCache = new Map<string, string | null>();
+
+async function mediaImage(path: string) {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (!token) return null;
+  const response = await fetch(`${API_URL}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) return null;
+  const data = await response.json().catch(() => ({}));
+  return typeof data.dataUrl === "string" ? data.dataUrl : null;
+}
+
+export function profileImageUpdated(id: string) {
+  profileImageCache.delete(id);
+  window.dispatchEvent(new CustomEvent(PROFILE_IMAGE_EVENT, { detail: { id, revision: Date.now() } }));
+}
+
+function useProfileImage(id?: string) {
+  const [source, setSource] = useState<string | null>(() => id && profileImageCache.has(id) ? profileImageCache.get(id)! : null);
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    if (!id) return;
+    const refresh = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail?.id === id) setRevision(Number(detail.revision) || Date.now());
+    };
+    window.addEventListener(PROFILE_IMAGE_EVENT, refresh);
+    return () => window.removeEventListener(PROFILE_IMAGE_EVENT, refresh);
+  }, [id]);
+  useEffect(() => {
+    if (!id) { setSource(null); return; }
+    let alive = true;
+    const cached = revision === 0 ? profileImageCache.get(id) : undefined;
+    if (cached !== undefined) { setSource(cached); return; }
+    void mediaImage(`/media/profile/${id}?v=${revision}`).then((value) => {
+      if (!alive) return;
+      profileImageCache.set(id, value);
+      setSource(value);
+    });
+    return () => { alive = false; };
+  }, [id, revision]);
+  return source;
+}
+
+export function Avatar({ name, small = false, id, preview }: { name: string; small?: boolean; id?: string; preview?: string | null }) {
+  const fetched = useProfileImage(id);
+  const [broken, setBroken] = useState(false);
+  const source = preview !== undefined ? preview : fetched;
+  useEffect(() => setBroken(false), [source]);
   const initials = name.trim().split(/\s+/).filter(Boolean).slice(0, 2).map(part => Array.from(part)[0]).join("").toLocaleUpperCase();
-  return <span className={`avatar${small ? " avatar-small" : ""}`} aria-hidden="true">{initials || "A"}</span>;
+  return <span className={`avatar${small ? " avatar-small" : ""}`} aria-hidden="true">{source && !broken ? <img src={source} alt="" onError={() => setBroken(true)}/> : initials || "A"}</span>;
+}
+
+export function PostImage({ postId, alt }: { postId: string; alt: string }) {
+  const [source, setSource] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void mediaImage(`/media/posts/${postId}`).then((value) => { if (alive) setSource(value); });
+    return () => { alive = false; };
+  }, [postId]);
+  return source ? <img className="post-image" src={source} alt={alt} loading="lazy"/> : null;
+}
+
+export async function prepareImage(file: File, maxDimension = 1200, startingQuality = .8) {
+  if (!file.type.startsWith("image/")) throw new Error("Choose an image file");
+  if (file.size > 12 * 1024 * 1024) throw new Error("Choose an image smaller than 12 MB");
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error("This image could not be opened"));
+      element.src = objectUrl;
+    });
+    let dimension = maxDimension;
+    let quality = startingQuality;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const scale = Math.min(1, dimension / Math.max(image.naturalWidth, image.naturalHeight));
+      const width = Math.max(1, Math.round(image.naturalWidth * scale));
+      const height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Image processing is unavailable in this browser");
+      context.drawImage(image, 0, 0, width, height);
+      const dataUrl = canvas.toDataURL("image/webp", quality);
+      if (dataUrl.length <= 650_000) return dataUrl;
+      dimension = Math.max(520, Math.round(dimension * .78));
+      quality = Math.max(.56, quality - .08);
+    }
+    throw new Error("This image is still too large after compression. Choose a smaller image.");
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 export function PageHeading({ title, description, icon, children }: { title: string; description: string; icon: IconName; children?: ReactNode }) {
