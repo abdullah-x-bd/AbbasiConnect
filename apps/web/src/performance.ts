@@ -1,4 +1,5 @@
 const TOKEN_KEY = "abbasiconnect_token";
+const SESSION_CACHE_KEY = "abbasiconnect_last_verified_session";
 const API_URL = import.meta.env.VITE_API_URL ?? "/api";
 const REALTIME_EVENT = "abbasiconnect:realtime";
 
@@ -7,6 +8,12 @@ type Snapshot = {
   status: number;
   statusText: string;
   headers: [string, string][];
+  storedAt: number;
+};
+
+type CachedSession = {
+  tokenTail: string;
+  body: string;
   storedAt: number;
 };
 
@@ -88,6 +95,38 @@ function cacheKey(url: string, headers: Headers) {
   return `${headers.get("authorization") || "guest"} ${url}`;
 }
 
+function tokenTail(value?: string | null) {
+  const token = value?.replace(/^Bearer\s+/i, "") || "";
+  return token.slice(-18);
+}
+
+function readCachedSession(authorization: string | null) {
+  try {
+    const raw = localStorage.getItem(SESSION_CACHE_KEY);
+    if (!raw) return null;
+    const cached = JSON.parse(raw) as CachedSession;
+    if (!cached.body || cached.tokenTail !== tokenTail(authorization)) return null;
+    if (Date.now() - cached.storedAt > 7 * 24 * 60 * 60 * 1000) return null;
+    return cached;
+  } catch {
+    return null;
+  }
+}
+
+function storeCachedSession(response: Response, authorization?: string | null) {
+  if (!response.ok) return;
+  void response.clone().text().then((body) => {
+    try {
+      const data = JSON.parse(body);
+      if (data?.mode !== "member" || !data?.user?.id) return;
+      const auth = authorization || (localStorage.getItem(TOKEN_KEY) ? `Bearer ${localStorage.getItem(TOKEN_KEY)}` : "");
+      localStorage.setItem(SESSION_CACHE_KEY, JSON.stringify({ tokenTail: tokenTail(auth), body, storedAt: Date.now() } satisfies CachedSession));
+    } catch {
+      // Session caching is only a rendering optimization.
+    }
+  });
+}
+
 function domainForPath(path: string) {
   if (path.includes("/messages-secure/") || path.includes("/crypto/")) return "messages";
   if (path.includes("/community/")) return "community";
@@ -159,14 +198,32 @@ function scheduleWarm(userId?: string) {
   }, 80);
 }
 
-async function maybeWarmFromAuth(response: Response, path: string) {
+async function maybeWarmFromAuth(response: Response, path: string, authorization?: string | null) {
   if (!response.ok || (!path.includes("/auth/session") && !path.includes("/auth/sign-in") && !path.includes("/auth/register"))) return;
+  storeCachedSession(response, authorization);
   try {
     const data = await response.clone().json();
     if (data?.mode === "member") scheduleWarm(data.user?.id);
   } catch {
     // Prefetching is opportunistic; auth itself should never depend on it.
   }
+}
+
+function revalidateSession(input: RequestInfo | URL, init: RequestInit | undefined, authorization: string | null) {
+  void nativeFetch(input, init).then((response) => {
+    if (response.ok) {
+      void maybeWarmFromAuth(response, "/auth/session", authorization);
+      return;
+    }
+    if (response.status === 401 || response.status === 403) {
+      localStorage.removeItem(SESSION_CACHE_KEY);
+      localStorage.removeItem(TOKEN_KEY);
+      invalidatePerformanceCache();
+      window.setTimeout(() => window.location.reload(), 0);
+    }
+  }).catch(() => {
+    // Keep the last verified shell during a temporary network or Render wake failure.
+  });
 }
 
 export function installPerformanceLayer() {
@@ -188,13 +245,30 @@ export function installPerformanceLayer() {
         if (domain) invalidatePerformanceCache(domain);
         if (path.includes("/auth/sign-in") || path.includes("/auth/register")) invalidatePerformanceCache();
       }
-      void maybeWarmFromAuth(response, path);
+      void maybeWarmFromAuth(response, path, headers.get("authorization"));
+      return response;
+    }
+
+    if (path.includes("/auth/session") && headers.get("authorization")) {
+      const cachedSession = readCachedSession(headers.get("authorization"));
+      if (cachedSession) {
+        revalidateSession(input, init, headers.get("authorization"));
+        try {
+          const data = JSON.parse(cachedSession.body);
+          if (data?.user?.id) scheduleWarm(data.user.id);
+        } catch {
+          // Ignore a malformed local cache and let normal validation happen next time.
+        }
+        return new Response(cachedSession.body, { status: 200, headers: { "content-type": "application/json" } });
+      }
+      const response = await nativeFetch(input, init);
+      void maybeWarmFromAuth(response, path, headers.get("authorization"));
       return response;
     }
 
     if (!isCacheablePath(path) || !headers.get("authorization")) {
       const response = await nativeFetch(input, init);
-      void maybeWarmFromAuth(response, path);
+      void maybeWarmFromAuth(response, path, headers.get("authorization"));
       return response;
     }
 
