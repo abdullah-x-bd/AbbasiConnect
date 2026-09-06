@@ -1,219 +1,45 @@
 import { FormEvent, useEffect, useState } from "react";
 
 const TOKEN_KEY = "abbasiconnect_token";
-
-type AdminTab = "overview" | "members" | "interests" | "reports";
-
-type Overview = {
-  generatedAt: string;
-  metrics: {
-    users: { total: number; active: number; paused: number; suspended: number; moderators: number; last7Days: number };
-    interests: { total: number; pending: number; accepted: number; declined: number; withdrawn: number };
-    shortlists: number;
-    blocks: number;
-    reports: { total: number; open: number; reviewed: number; actioned: number; dismissed: number };
-  };
-  distributions: {
-    gender: Array<{ label: string; count: number }>;
-    cities: Array<{ label: string; count: number }>;
-    maritalStatus: Array<{ label: string; count: number }>;
-  };
-  recentUsers: AdminUser[];
-};
-
-type AdminUser = {
-  id: string;
-  displayName: string;
-  username: string;
-  email?: string | null;
-  phone?: string | null;
-  age?: number | null;
-  gender?: string | null;
-  city?: string | null;
-  state?: string | null;
-  country?: string | null;
-  heightCm?: number | null;
-  maritalStatus?: string | null;
-  education?: string;
-  occupation?: string;
-  profileCreatedBy?: string;
-  isProfileActive: boolean;
-  role: string;
-  suspendedAt?: string | null;
-  createdAt: string;
-  verifiedAt?: string;
-  identityVerified?: boolean;
-  identityLast4?: string | null;
-};
-
-type AdminInterest = {
-  id: string;
-  status: string;
-  message: string;
-  createdAt: string;
-  updatedAt: string;
-  sender: { displayName: string; username: string };
-  receiver: { displayName: string; username: string };
-};
-
-type AdminReport = {
-  id: string;
-  reason: string;
-  details: string;
-  status: string;
-  moderationNote: string;
-  createdAt: string;
-  reporter: { displayName: string; username: string };
-  reportedUser: { displayName: string; username: string; suspendedAt?: string | null };
-};
+const API_URL = import.meta.env.VITE_API_URL ?? "/api";
+type Tab = "overview" | "members" | "reports";
 
 async function adminApi(path: string, options: RequestInit = {}) {
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");
   const token = localStorage.getItem(TOKEN_KEY);
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  const response = await fetch(`/admin-api${path}`, { ...options, headers });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({ error: "Admin request failed" }));
-    throw new Error(data.error ?? "Admin request failed");
-  }
-  return response.json();
-}
-
-function pretty(value?: string | null) {
-  if (!value) return "Not specified";
-  return value.toLowerCase().replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+  const response = await fetch(`${API_URL}/admin${path}`, { ...options, headers });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "Admin request failed");
+  return data;
 }
 
 function Metric({ label, value, note }: { label: string; value: number; note?: string }) {
   return <article className="admin-metric"><span>{label}</span><strong>{value}</strong>{note && <small>{note}</small>}</article>;
 }
 
-function Distribution({ title, items }: { title: string; items: Array<{ label: string; count: number }> }) {
-  return <section className="admin-panel"><h3>{title}</h3><div className="admin-distribution">{items.length ? items.map((item) => <div key={item.label}><span>{pretty(item.label)}</span><strong>{item.count}</strong></div>) : <p className="muted">No data yet.</p>}</div></section>;
-}
-
 export default function AdminDashboard({ onLogout }: { onLogout: () => void }) {
-  const [tab, setTab] = useState<AdminTab>("overview");
-  const [overview, setOverview] = useState<Overview | null>(null);
-  const [users, setUsers] = useState<AdminUser[]>([]);
-  const [interests, setInterests] = useState<AdminInterest[]>([]);
-  const [reports, setReports] = useState<AdminReport[]>([]);
+  const [tab, setTab] = useState<Tab>("overview");
+  const [overview, setOverview] = useState<any>(null);
+  const [users, setUsers] = useState<any[]>([]);
+  const [reports, setReports] = useState<any[]>([]);
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
-  async function loadOverview() {
-    setLoading(true);
-    try { setOverview(await adminApi("/overview")); }
-    catch (err) { setError(err instanceof Error ? err.message : "Could not load overview"); }
-    finally { setLoading(false); }
-  }
-
-  async function loadUsers(event?: FormEvent) {
-    event?.preventDefault();
-    setLoading(true);
-    try {
-      const params = new URLSearchParams();
-      if (query.trim()) params.set("q", query.trim());
-      if (status) params.set("status", status);
-      const data = await adminApi(`/users${params.toString() ? `?${params}` : ""}`);
-      setUsers(data.users);
-    } catch (err) { setError(err instanceof Error ? err.message : "Could not load members"); }
-    finally { setLoading(false); }
-  }
-
-  async function loadInterests() {
-    setLoading(true);
-    try { setInterests((await adminApi("/interests")).interests); }
-    catch (err) { setError(err instanceof Error ? err.message : "Could not load interests"); }
-    finally { setLoading(false); }
-  }
-
-  async function loadReports() {
-    setLoading(true);
-    try { setReports((await adminApi("/reports")).reports); }
-    catch (err) { setError(err instanceof Error ? err.message : "Could not load reports"); }
-    finally { setLoading(false); }
-  }
-
+  async function loadOverview() { setLoading(true); try { setOverview(await adminApi("/overview")); } catch (e) { setError(e instanceof Error ? e.message : "Could not load overview"); } finally { setLoading(false); } }
+  async function loadUsers(event?: FormEvent) { event?.preventDefault(); setLoading(true); try { const data = await adminApi(`/users${query ? `?q=${encodeURIComponent(query)}` : ""}`); setUsers(data.users); } catch (e) { setError(e instanceof Error ? e.message : "Could not load members"); } finally { setLoading(false); } }
+  async function loadReports() { setLoading(true); try { setReports((await adminApi("/reports")).reports); } catch (e) { setError(e instanceof Error ? e.message : "Could not load reports"); } finally { setLoading(false); } }
   useEffect(() => { loadOverview(); }, []);
 
-  function changeTab(next: AdminTab) {
-    setTab(next);
-    setError("");
-    if (next === "overview") loadOverview();
-    if (next === "members") loadUsers();
-    if (next === "interests") loadInterests();
-    if (next === "reports") loadReports();
-  }
+  function change(next: Tab) { setTab(next); setError(""); if (next === "overview") loadOverview(); if (next === "members") loadUsers(); if (next === "reports") loadReports(); }
+  async function userAction(id: string, action: string) { await adminApi(`/users/${id}`, { method: "PATCH", body: JSON.stringify({ action }) }); await loadUsers(); await loadOverview(); }
+  async function reportAction(id: string, action: string) { const note = window.prompt("Optional admin note", "") ?? ""; await adminApi(`/reports/${id}`, { method: "PATCH", body: JSON.stringify({ action, note }) }); await loadReports(); await loadOverview(); }
 
-  async function actOnUser(user: AdminUser, action: string) {
-    await adminApi(`/users/${user.id}`, { method: "PATCH", body: JSON.stringify({ action }) });
-    await loadUsers();
-    if (overview) await loadOverview();
-  }
-
-  async function actOnReport(report: AdminReport, action: string) {
-    const note = window.prompt("Optional admin note", "") ?? "";
-    await adminApi(`/reports/${report.id}`, { method: "PATCH", body: JSON.stringify({ action, note }) });
-    await loadReports();
-    if (overview) await loadOverview();
-  }
-
-  return <main className="admin-shell">
-    <header className="admin-topbar">
-      <div><div className="admin-brand">AbbasiConnect</div><span>Administration</span></div>
-      <nav>
-        <button className={tab === "overview" ? "admin-nav-active" : ""} onClick={() => changeTab("overview")}>Overview</button>
-        <button className={tab === "members" ? "admin-nav-active" : ""} onClick={() => changeTab("members")}>Members</button>
-        <button className={tab === "interests" ? "admin-nav-active" : ""} onClick={() => changeTab("interests")}>Interests</button>
-        <button className={tab === "reports" ? "admin-nav-active" : ""} onClick={() => changeTab("reports")}>Reports</button>
-      </nav>
-      <button className="ghost" onClick={onLogout}>Log out</button>
-    </header>
-
-    <div className="admin-page">
-      {error && <div className="error panel"><button className="dismiss" onClick={() => setError("")}>×</button>{error}</div>}
-      {loading && <p className="muted">Loading admin data...</p>}
-
-      {tab === "overview" && overview && <>
-        <section className="page-heading"><div><h1>Platform overview</h1><p>System-wide view of AbbasiConnect activity and profile health.</p></div><small>Updated {new Date(overview.generatedAt).toLocaleString()}</small></section>
-        <div className="admin-metrics">
-          <Metric label="Member accounts" value={overview.metrics.users.total} note={`${overview.metrics.users.last7Days} joined in 7 days`} />
-          <Metric label="Active profiles" value={overview.metrics.users.active} />
-          <Metric label="Suspended" value={overview.metrics.users.suspended} />
-          <Metric label="Accepted interests" value={overview.metrics.interests.accepted} note={`${overview.metrics.interests.pending} pending`} />
-          <Metric label="Shortlist saves" value={overview.metrics.shortlists} />
-          <Metric label="Open reports" value={overview.metrics.reports.open} />
-        </div>
-        <div className="admin-overview-grid">
-          <section className="admin-panel"><h3>Interest funnel</h3><div className="admin-distribution"><div><span>Total</span><strong>{overview.metrics.interests.total}</strong></div><div><span>Pending</span><strong>{overview.metrics.interests.pending}</strong></div><div><span>Accepted</span><strong>{overview.metrics.interests.accepted}</strong></div><div><span>Declined</span><strong>{overview.metrics.interests.declined}</strong></div><div><span>Withdrawn</span><strong>{overview.metrics.interests.withdrawn}</strong></div></div></section>
-          <section className="admin-panel"><h3>Profile health</h3><div className="admin-distribution"><div><span>Active</span><strong>{overview.metrics.users.active}</strong></div><div><span>Paused</span><strong>{overview.metrics.users.paused}</strong></div><div><span>Suspended</span><strong>{overview.metrics.users.suspended}</strong></div><div><span>Moderators</span><strong>{overview.metrics.users.moderators}</strong></div><div><span>Blocks</span><strong>{overview.metrics.blocks}</strong></div></div></section>
-          <Distribution title="Gender distribution" items={overview.distributions.gender} />
-          <Distribution title="Top cities" items={overview.distributions.cities} />
-          <Distribution title="Marital status" items={overview.distributions.maritalStatus} />
-          <section className="admin-panel"><h3>Report status</h3><div className="admin-distribution"><div><span>Total</span><strong>{overview.metrics.reports.total}</strong></div><div><span>Open</span><strong>{overview.metrics.reports.open}</strong></div><div><span>Reviewed</span><strong>{overview.metrics.reports.reviewed}</strong></div><div><span>Actioned</span><strong>{overview.metrics.reports.actioned}</strong></div><div><span>Dismissed</span><strong>{overview.metrics.reports.dismissed}</strong></div></div></section>
-        </div>
-        <section className="admin-panel admin-wide"><h3>Recent registrations</h3><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Member</th><th>Age</th><th>Gender</th><th>City</th><th>Occupation</th><th>Status</th><th>Joined</th></tr></thead><tbody>{overview.recentUsers.map((user) => <tr key={user.id}><td><strong>{user.displayName}</strong><small>@{user.username}</small></td><td>{user.age ?? "—"}</td><td>{user.gender || "—"}</td><td>{user.city || "—"}</td><td>{user.occupation || "—"}</td><td>{user.suspendedAt ? "Suspended" : user.isProfileActive ? "Active" : "Paused"}</td><td>{new Date(user.createdAt).toLocaleDateString()}</td></tr>)}</tbody></table></div></section>
-      </>}
-
-      {tab === "members" && <>
-        <section className="page-heading"><div><h1>Members</h1><p>Search every matrimonial account and manage platform access.</p></div></section>
-        <form className="admin-filters" onSubmit={loadUsers}><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Name, username, email, phone, city, occupation" /><select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">All accounts</option><option value="active">Active</option><option value="paused">Paused</option><option value="suspended">Suspended</option></select><button type="submit">Search</button></form>
-        <div className="admin-member-list">{users.map((user) => <article className="admin-member" key={user.id}><div className="admin-member-main"><div><h3>{user.displayName}</h3><p>@{user.username} · {user.role}</p></div><div className="facts"><span>{user.age ? `${user.age} years` : "Age unknown"}</span>{user.gender && <span>{user.gender}</span>}{user.maritalStatus && <span>{pretty(user.maritalStatus)}</span>}{user.city && <span>{user.city}</span>}</div><p><strong>Occupation</strong> {user.occupation || "Not specified"}</p><p><strong>Contact</strong> {user.email || "No email"}{user.phone ? ` · ${user.phone}` : ""}</p><p><strong>Identity</strong> {user.identityVerified ? "Aadhaar-linked" : "Not linked"}{user.identityLast4 ? ` · ending ${user.identityLast4}` : ""}</p><p><strong>Joined</strong> {new Date(user.createdAt).toLocaleString()}</p></div><div className="admin-member-actions"><span className={`status-pill ${user.suspendedAt ? "" : user.isProfileActive ? "matched" : "incoming"}`}>{user.suspendedAt ? "Suspended" : user.isProfileActive ? "Active" : "Paused"}</span>{user.suspendedAt ? <button onClick={() => actOnUser(user, "RESTORE")}>Restore account</button> : <button className="danger" onClick={() => actOnUser(user, "SUSPEND")}>Suspend account</button>}{user.isProfileActive ? <button className="ghost" onClick={() => actOnUser(user, "PAUSE")}>Hide profile</button> : <button className="ghost" onClick={() => actOnUser(user, "ACTIVATE")}>Show profile</button>}{user.role === "MODERATOR" ? <button className="ghost" onClick={() => actOnUser(user, "MAKE_MEMBER")}>Remove moderator</button> : <button className="ghost" onClick={() => actOnUser(user, "MAKE_MODERATOR")}>Make moderator</button>}</div></article>)}</div>
-      </>}
-
-      {tab === "interests" && <>
-        <section className="page-heading"><div><h1>Interest activity</h1><p>Birds-eye view of requests and accepted connections across the platform.</p></div></section>
-        <div className="admin-feed">{interests.map((item) => <article className="admin-interest" key={item.id}><div><span className={`status-pill ${item.status === "ACCEPTED" ? "matched" : item.status === "PENDING" ? "incoming" : ""}`}>{pretty(item.status)}</span><h3>@{item.sender.username} → @{item.receiver.username}</h3><p>{item.sender.displayName} sent interest to {item.receiver.displayName}</p>{item.message && <blockquote>{item.message}</blockquote>}</div><small>{new Date(item.updatedAt).toLocaleString()}</small></article>)}</div>
-      </>}
-
-      {tab === "reports" && <>
-        <section className="page-heading"><div><h1>Reports</h1><p>Review complaints and take platform-level moderation action.</p></div></section>
-        <div className="report-list">{reports.map((report) => <article className="report-card" key={report.id}><div><strong>{pretty(report.reason)}</strong> · {pretty(report.status)}</div><p>Reported <strong>@{report.reportedUser.username}</strong> by @{report.reporter.username}</p>{report.details && <blockquote>{report.details}</blockquote>}{report.moderationNote && <p><strong>Admin note</strong> {report.moderationNote}</p>}<div className="card-actions"><button onClick={() => actOnReport(report, "REVIEW")}>Mark reviewed</button><button className="danger" onClick={() => actOnReport(report, "SUSPEND_USER")}>Suspend member</button><button className="ghost" onClick={() => actOnReport(report, "RESTORE_USER")}>Restore</button><button className="ghost" onClick={() => actOnReport(report, "DISMISS")}>Dismiss</button></div></article>)}</div>
-      </>}
-    </div>
-  </main>;
+  return <main className="admin-shell"><header className="admin-topbar"><div><div className="admin-brand">AbbasiConnect</div><span>Administration</span></div><nav><button className={tab === "overview" ? "admin-nav-active" : ""} onClick={() => change("overview")}>Overview</button><button className={tab === "members" ? "admin-nav-active" : ""} onClick={() => change("members")}>Members</button><button className={tab === "reports" ? "admin-nav-active" : ""} onClick={() => change("reports")}>Reports</button></nav><button className="ghost" onClick={onLogout}>Log out</button></header><div className="admin-page">{error && <p className="error">{error}</p>}{loading && <p className="muted">Loading…</p>}
+    {tab === "overview" && overview && <><section className="page-heading"><div><p className="eyebrow">ADMIN</p><h1>Platform overview</h1><p>Bird’s-eye view of the community platform.</p></div><small>Updated {new Date(overview.generatedAt).toLocaleString()}</small></section><div className="admin-metrics"><Metric label="Members" value={overview.metrics.users} note={`${overview.metrics.recentUsers} joined in 7 days`} /><Metric label="Active Rishte" value={overview.metrics.activeRishte} /><Metric label="Family links" value={overview.metrics.familyLinks} note={`${overview.metrics.verifiedFamilyLinks} verified`} /><Metric label="Tree requests" value={overview.metrics.pendingTreeRequests} note="pending" /><Metric label="Community posts" value={overview.metrics.posts} /><Metric label="Messages" value={overview.metrics.messages} /><Metric label="Rishte interests" value={overview.metrics.interests} note={`${overview.metrics.acceptedInterests} accepted`} /><Metric label="Open reports" value={overview.metrics.openReports} note={`${overview.metrics.reports} total`} /></div><section className="admin-panel admin-wide"><h2>What the platform is tracking</h2><div className="admin-summary-grid"><div><strong>Identity</strong><p>Contact verification is required. Aadhaar remains optional.</p></div><div><strong>Family graph</strong><p>Registered and invited relatives, claim codes and verified links.</p></div><div><strong>Privacy</strong><p>Family trees require owner approval before another member can view them.</p></div><div><strong>Community</strong><p>Text posts, direct messages and opt-in Rishte listings.</p></div></div></section></>}
+    {tab === "members" && <><section className="page-heading"><div><p className="eyebrow">ADMIN</p><h1>Members</h1><p>Search accounts and inspect community participation.</p></div></section><form className="admin-filters" onSubmit={loadUsers}><input placeholder="Name, username, email or phone" value={query} onChange={(e) => setQuery(e.target.value)} /><button>Search</button></form><div className="admin-member-list">{users.map((u) => <article className="admin-member" key={u.id}><div className="admin-member-main"><div className="card-head"><div><h3>{u.displayName}</h3><p>@{u.username} · {u.role}</p></div><span className="verify-chip">{u.contactVerified ? "Contact verified" : "Unverified"}</span></div><div className="facts"><span>{u.age ? `${u.age} yrs` : "Age unknown"}</span>{u.city && <span>{u.city}</span>}{u.occupation && <span>{u.occupation}</span>}</div><p><strong>Contact</strong> {u.email || u.phone || "Not provided"}</p><p><strong>Aadhaar</strong> {u.aadhaarVerified ? "Optional identity linked" : "Not linked"}</p><p><strong>Family links</strong> {u.familyLinks} · <strong>Posts</strong> {u.postCount} · <strong>Messages sent</strong> {u.messageCount}</p><p><strong>Rishte</strong> {u.rishteActive ? "Listed" : "Not listed"} · <strong>Directory</strong> {u.isDirectoryVisible ? "Visible" : "Hidden"}</p></div><div className="admin-member-actions">{u.suspendedAt ? <button onClick={() => userAction(u.id, "RESTORE")}>Restore</button> : <button className="danger" onClick={() => userAction(u.id, "SUSPEND")}>Suspend</button>}{u.role === "MODERATOR" ? <button className="ghost" onClick={() => userAction(u.id, "MAKE_MEMBER")}>Remove moderator</button> : <button className="ghost" onClick={() => userAction(u.id, "MAKE_MODERATOR")}>Make moderator</button>}{u.isDirectoryVisible ? <button className="ghost" onClick={() => userAction(u.id, "HIDE_DIRECTORY")}>Hide from directory</button> : <button className="ghost" onClick={() => userAction(u.id, "SHOW_DIRECTORY")}>Show in directory</button>}</div></article>)}</div></>}
+    {tab === "reports" && <><section className="page-heading"><div><p className="eyebrow">ADMIN</p><h1>Reports</h1><p>Profile and community-post reports.</p></div></section><div className="report-list">{reports.map((r) => <article className="report-card" key={r.id}><div><strong>{r.reason}</strong> · {r.status}</div><p>Reporter @{r.reporter?.username}</p>{r.reportedUser && <p>Reported member <strong>@{r.reportedUser.username}</strong></p>}{r.post && <blockquote>{r.post.body}</blockquote>}{r.details && <p>{r.details}</p>}<div className="button-row"><button onClick={() => reportAction(r.id, "REVIEW")}>Mark reviewed</button>{r.reportedUser && <button className="danger" onClick={() => reportAction(r.id, "SUSPEND_USER")}>Suspend member</button>}<button className="ghost" onClick={() => reportAction(r.id, "DISMISS")}>Dismiss</button></div></article>)}</div></>}
+  </div></main>;
 }
