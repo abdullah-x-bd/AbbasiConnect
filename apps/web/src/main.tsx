@@ -5,8 +5,6 @@ import { installPerformanceLayer } from "./performance";
 import "./styles.css";
 import "./family-tree.css";
 import "./admin.css";
-import "./polish.css";
-import "./dashboard.css";
 
 const AdminDashboard = React.lazy(() => import("./AdminDashboard"));
 const TOKEN_KEY = "abbasiconnect_token";
@@ -30,13 +28,3 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     ) : <App />}
   </React.StrictMode>,
 );
-
-if (!adminRoute) {
-  void Promise.all([
-    import("./familyTreeEnhancer"),
-    import("./experienceEnhancer"),
-  ]).then(([familyTree, experience]) => {
-    familyTree.installFamilyTreeEnhancer();
-    experience.installExperienceEnhancer();
-  });
-}

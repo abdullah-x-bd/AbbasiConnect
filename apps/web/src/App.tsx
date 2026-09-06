@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   decryptMessage,
   encryptMessage,
@@ -8,8 +8,11 @@ import {
   unlockSecureMessaging,
 } from "./e2ee";
 import { onRealtime, stopRealtimeConnection, syncRealtimeConnection } from "./realtime";
+import Home from "./Home";
+import FamilyTree from "./FamilyTree";
+import { Avatar, BrandMark, EmptyState, Icon, LoadingState, Notice, PageHeading, useAction, type IconName } from "./ui";
 
-type Member = {
+export type Member = {
   id: string;
   displayName: string;
   username: string;
@@ -34,7 +37,7 @@ type Member = {
   role?: string;
 };
 
-type Module = "home" | "rishte" | "family" | "community" | "messages" | "settings";
+export type Module = "home" | "rishte" | "family" | "community" | "messages" | "settings";
 const TOKEN_KEY = "abbasiconnect_token";
 const API_URL = import.meta.env.VITE_API_URL ?? "/api";
 const BASE_URL = import.meta.env.BASE_URL || "/";
@@ -58,9 +61,10 @@ function fmt(value?: string | null) {
 function MemberLine({ member }: { member: Member }) {
   return (
     <div className="member-line">
-      <strong>{member.displayName}</strong>
+      <Avatar name={member.displayName}/>
+      <div className="member-copy"><strong>{member.displayName}</strong>
       <span>@{member.username}</span>
-      <small>{[member.age ? `${member.age} yrs` : "", member.occupation, member.city].filter(Boolean).join(" · ")}</small>
+      <small>{[member.age ? `${member.age} yrs` : "", member.occupation, member.city].filter(Boolean).join(" · ")}</small></div>
     </div>
   );
 }
@@ -85,6 +89,12 @@ export default function App() {
     country: "India",
   });
   const [challenge, setChallenge] = useState<{ id: string; developmentCode?: string } | null>(null);
+  const { working, perform } = useAction(setError);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+    document.querySelector<HTMLElement>("#main-content h1")?.focus({ preventScroll: true });
+  }, [module]);
 
   useEffect(() => {
     const token = localStorage.getItem(TOKEN_KEY);
@@ -179,105 +189,84 @@ export default function App() {
     setEntry("home");
   }
 
-  if (loading) return <main className="center-screen">Opening AbbasiConnect…</main>;
+  if (loading) return <main className="center-screen"><BrandMark/><LoadingState label="Opening AbbasiConnect…"/></main>;
 
   if (!member) {
-    return (
-      <main className="auth-shell">
-        <section className="auth-card compact-auth">
-          <div className="auth-brand">AbbasiConnect</div>
-          {entry === "home" && (
-            <>
-              <h1>Community access</h1>
-              <div className="entry-grid clean-entry">
-                <button className="entry-choice" onClick={() => setEntry("register")}>Create account</button>
-                <button className="entry-choice secondary" onClick={() => setEntry("signin")}>Sign in</button>
-              </div>
-            </>
-          )}
-
-          {entry === "signin" && (
-            <form className="stack" onSubmit={signIn}>
-              <div className="form-title"><button type="button" className="text-back" onClick={() => setEntry("home")}>←</button><h2>Sign in</h2></div>
-              <label>Username<input value={login.username} onChange={(e) => setLogin({ ...login, username: e.target.value })} required /></label>
-              <label>Password<input type="password" value={login.password} onChange={(e) => setLogin({ ...login, password: e.target.value })} required /></label>
-              {error && <p className="error">{error}</p>}
-              <button>Sign in</button>
-            </form>
-          )}
-
-          {entry === "register" && (
-            <form className="stack" onSubmit={createAccount}>
-              <div className="form-title"><button type="button" className="text-back" onClick={() => setEntry("home")}>←</button><h2>Create account</h2></div>
-              <div className="form-grid two">
-                <label>Name<input value={register.displayName} onChange={(e) => setRegister({ ...register, displayName: e.target.value })} required /></label>
-                <label>Username<input value={register.username} onChange={(e) => setRegister({ ...register, username: e.target.value.replace(/[^a-zA-Z0-9_]/g, "") })} minLength={3} required /></label>
-                <label>Phone or email<input value={register.contact} onChange={(e) => setRegister({ ...register, contact: e.target.value })} placeholder="+91… or name@example.com" required /></label>
-                <label>Password<input type="password" minLength={8} value={register.password} onChange={(e) => setRegister({ ...register, password: e.target.value })} required /><small className="field-note">8 characters minimum</small></label>
-                <label>Date of birth<input type="date" value={register.dateOfBirth} onChange={(e) => setRegister({ ...register, dateOfBirth: e.target.value })} /></label>
-                <label>Gender<select value={register.gender} onChange={(e) => setRegister({ ...register, gender: e.target.value })}><option value="">Select</option><option>Male</option><option>Female</option><option>Other</option></select></label>
-                <label>City<input value={register.city} onChange={(e) => setRegister({ ...register, city: e.target.value })} /></label>
-                <label>State<input value={register.state} onChange={(e) => setRegister({ ...register, state: e.target.value })} /></label>
-              </div>
-              <div className="otp-box">
-                <div className="otp-head"><strong>Verify contact</strong><button type="button" className="secondary" onClick={requestOtp}>Request OTP</button></div>
-                {challenge?.developmentCode && <div className="test-otp">Testing code <strong>{challenge.developmentCode}</strong></div>}
-                <label>OTP<input inputMode="numeric" maxLength={6} value={register.otp} onChange={(e) => setRegister({ ...register, otp: e.target.value.replace(/\D/g, "").slice(0, 6) })} required /></label>
-              </div>
-              {error && <p className="error">{error}</p>}
-              <button>Create account</button>
-            </form>
-          )}
-        </section>
-      </main>
-    );
+    return <main className="auth-shell">
+      <aside className="auth-story">
+        <div className="auth-brand"><BrandMark/><span>AbbasiConnect</span></div>
+        <div className="auth-story-content">
+          <div className="auth-connection-art" aria-hidden="true"><svg viewBox="0 0 360 210" fill="none"><path d="M60 150V110H180V60M300 150V110H180M180 110v40"/><rect x="153" y="22" width="54" height="54" rx="12"/><rect x="33" y="146" width="54" height="54" rx="12"/><rect x="153" y="146" width="54" height="54" rx="12"/><rect x="273" y="146" width="54" height="54" rx="12"/><circle cx="180" cy="49" r="8"/><circle cx="60" cy="173" r="8"/><circle cx="180" cy="173" r="8"/><circle cx="300" cy="173" r="8"/></svg></div>
+          <span className="section-kicker">A shared sense of belonging</span>
+          <h2>Our community, connected.</h2>
+          <p>A place to keep family close, make meaningful introductions, and stay part of the conversation.</p>
+          <div className="auth-services"><span><Icon name="family"/> Family tree</span><span><Icon name="rishte"/> Rishte</span><span><Icon name="community"/> Community</span><span><Icon name="messages"/> Messages</span></div>
+        </div>
+        <span className="auth-footnote">Made for the connections that matter.</span>
+      </aside>
+      <section className={`auth-card ${entry === "register" ? "registration-card" : ""}`}>
+        <div className="auth-mobile-brand"><BrandMark/>AbbasiConnect</div>
+        {entry === "home" && <div className="auth-welcome">
+          <span className="section-kicker">Welcome to AbbasiConnect</span>
+          <h1>Make yourself at home.</h1>
+          <p>Sign in to reconnect with your community, or join us by creating an account.</p>
+          <div className="entry-grid"><button onClick={() => { setError(""); setEntry("signin"); }}>Sign in <Icon name="arrow"/></button><button className="secondary" onClick={() => { setError(""); setEntry("register"); }}>Create account</button></div>
+          <div className="auth-note"><Icon name="lock"/><span>Your family tree is shared with your approval.</span></div>
+        </div>}
+        {entry === "signin" && <form className="stack" onSubmit={event => { event.preventDefault(); void perform(() => signIn(event)); }} aria-busy={working}>
+          <div className="form-title"><button type="button" className="icon-button" aria-label="Back to welcome" onClick={() => { setError(""); setEntry("home"); }}><Icon name="back"/></button><div><h1>Welcome back</h1><p>Sign in to your community.</p></div></div>
+          <label>Username<input autoComplete="username" autoCapitalize="none" spellCheck={false} value={login.username} onChange={e => setLogin({ ...login, username: e.target.value })} required/></label>
+          <label>Password<input type="password" autoComplete="current-password" value={login.password} onChange={e => setLogin({ ...login, password: e.target.value })} required/></label>
+          <Notice>{error}</Notice>
+          <button disabled={working}>{working ? "Signing in…" : "Sign in"}<Icon name="arrow"/></button>
+        </form>}
+        {entry === "register" && <form className="stack" onSubmit={event => { event.preventDefault(); void perform(() => createAccount(event)); }} aria-busy={working}>
+          <div className="form-title"><button type="button" className="icon-button" aria-label="Back to welcome" onClick={() => { setError(""); setEntry("home"); }}><Icon name="back"/></button><div><h1>Join the community</h1><p>A few details to get you started.</p></div></div>
+          <div className="form-grid two">
+            <label>Name<input autoComplete="name" value={register.displayName} onChange={e => setRegister({ ...register, displayName: e.target.value })} required/></label>
+            <label>Username<input autoComplete="username" autoCapitalize="none" spellCheck={false} value={register.username} onChange={e => setRegister({ ...register, username: e.target.value.replace(/[^a-zA-Z0-9_]/g, "") })} minLength={3} required/></label>
+            <label>Phone or email<input autoComplete="email" value={register.contact} onChange={e => setRegister({ ...register, contact: e.target.value })} placeholder="+91… or name@example.com" required/></label>
+            <label>Password<input type="password" autoComplete="new-password" minLength={8} value={register.password} onChange={e => setRegister({ ...register, password: e.target.value })} required/><small className="field-note">8 characters minimum</small></label>
+            <label>Date of birth<input type="date" autoComplete="bday" value={register.dateOfBirth} onChange={e => setRegister({ ...register, dateOfBirth: e.target.value })}/></label>
+            <label>Gender<select value={register.gender} onChange={e => setRegister({ ...register, gender: e.target.value })}><option value="">Select</option><option>Male</option><option>Female</option><option>Other</option></select></label>
+            <label>City<input autoComplete="address-level2" value={register.city} onChange={e => setRegister({ ...register, city: e.target.value })}/></label>
+            <label>State<input autoComplete="address-level1" value={register.state} onChange={e => setRegister({ ...register, state: e.target.value })}/></label>
+          </div>
+          <div className="otp-box"><div className="otp-head"><div><strong>Verify your contact</strong><small>Request your six digit verification code.</small></div><button type="button" className="secondary" disabled={working} onClick={() => void perform(requestOtp)}>Request OTP</button></div>
+            {challenge?.developmentCode && <p className="test-otp">Testing code <strong>{challenge.developmentCode}</strong></p>}
+            <label>Verification code<input autoComplete="one-time-code" inputMode="numeric" maxLength={6} placeholder="6 digit code" value={register.otp} onChange={e => setRegister({ ...register, otp: e.target.value.replace(/\D/g, "").slice(0, 6) })} required/></label>
+          </div>
+          <Notice>{error}</Notice><button disabled={working}>{working ? "Please wait…" : "Create account"}<Icon name="arrow"/></button>
+        </form>}
+      </section>
+    </main>;
   }
 
-  return (
-    <main className="app-shell">
-      <header className="topbar">
-        <button className="brand-button" onClick={() => setModule("home")}>AbbasiConnect</button>
-        <nav className="desktop-nav">
-          <button onClick={() => setModule("rishte")}>Rishte</button>
-          <button onClick={() => setModule("family")}>Family tree</button>
-          <button onClick={() => setModule("community")}>Community</button>
-          <button onClick={() => setModule("messages")}>Messages</button>
-        </nav>
-        <div className="top-member"><span>{member.displayName}</span><small>@{member.username}</small></div>
-        <button className="ghost" onClick={() => setModule("settings")}>Account</button>
-        <button className="ghost" onClick={logout}>Log out</button>
-      </header>
-      {module === "home" ? (
-        <Home member={member} open={setModule} />
-      ) : (
-        <div className="page-wrap">
-          <button className="back-link" onClick={() => setModule("home")}>← Home</button>
-          {module === "rishte" && <Rishte me={member} />}
-          {module === "family" && <Family me={member} />}
-          {module === "community" && <Community me={member} />}
-          {module === "messages" && <Messages me={member} />}
-          {module === "settings" && <Settings member={member} setMember={setMember} />}
-        </div>
-      )}
+  const navigation: { id: Module; label: string; icon: IconName }[] = [
+    { id: "rishte", label: "Rishte", icon: "rishte" },
+    { id: "family", label: "Family tree", icon: "family" },
+    { id: "community", label: "Community", icon: "community" },
+    { id: "messages", label: "Messages", icon: "messages" },
+  ];
+  return <div className={`app-shell module-${module}`}>
+    <a className="skip-link" href="#main-content">Skip to content</a>
+    <header className="topbar"><div className="topbar-inner">
+      <button className="brand-button" aria-label="AbbasiConnect home" onClick={() => setModule("home")}><BrandMark/><span>AbbasiConnect</span></button>
+      <nav className="main-nav" aria-label="Main navigation">{navigation.map(item => <button key={item.id} className={module === item.id ? "active" : ""} aria-current={module === item.id ? "page" : undefined} onClick={() => setModule(item.id)}><Icon name={item.icon}/><span>{item.label}</span></button>)}</nav>
+      <div className="top-member"><Avatar name={member.displayName} small/><span><strong>{member.displayName}</strong><small>@{member.username}</small></span></div>
+      <div className="account-actions"><button className={`header-action ${module === "settings" ? "active" : ""}`} aria-current={module === "settings" ? "page" : undefined} onClick={() => setModule("settings")}><Icon name="account"/><span>Account</span></button><button className="header-action" onClick={logout}><Icon name="logout"/><span>Log out</span></button></div>
+    </div></header>
+    <main id="main-content" tabIndex={-1}>
+      {module === "home" ? <Home member={member} open={setModule}/> : <div className="page-wrap" key={module}>
+        <button className="back-link" onClick={() => setModule("home")}><Icon name="back"/> Home</button>
+        {module === "rishte" && <Rishte me={member}/>}
+        {module === "family" && <Family me={member}/>}
+        {module === "community" && <Community me={member}/>}
+        {module === "messages" && <Messages me={member}/>}
+        {module === "settings" && <Settings member={member} setMember={setMember}/>}
+      </div>}
     </main>
-  );
-}
-
-function Home({ member, open }: { member: Member; open: (module: Module) => void }) {
-  return (
-    <div className="home-wrap new-home">
-      <div className="home-bar">
-        <div><span>Signed in as</span><strong>{member.displayName}</strong></div>
-        <span className="connection-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-      </div>
-      <section className="service-index" aria-label="AbbasiConnect services">
-        <button onClick={() => open("rishte")}><span>01</span><strong>Rishte</strong><b>→</b></button>
-        <button onClick={() => open("family")}><span>02</span><strong>Family tree</strong><b>→</b></button>
-        <button onClick={() => open("community")}><span>03</span><strong>Community</strong><b>→</b></button>
-        <button onClick={() => open("messages")}><span>04</span><strong>Messages</strong><b>→</b></button>
-      </section>
-    </div>
-  );
+  </div>;
 }
 
 function Rishte({ me }: { me: Member }) {
@@ -285,6 +274,8 @@ function Rishte({ me }: { me: Member }) {
   const [mine, setMine] = useState<any>(null);
   const [interests, setInterests] = useState<any>({ received: [], sent: [] });
   const [error, setError] = useState("");
+  const { working, perform } = useAction(setError);
+  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState({ q: "", city: "", gender: "" });
   const [editing, setEditing] = useState(false);
   const [edit, setEdit] = useState({ isActive: true, headline: "", bio: "", familyNote: "", lookingFor: "" });
@@ -305,7 +296,7 @@ function Rishte({ me }: { me: Member }) {
       setError("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load Rishte");
-    }
+    } finally { setLoading(false); }
   }
 
   useEffect(() => { void load(); }, []);
@@ -344,59 +335,47 @@ function Rishte({ me }: { me: Member }) {
 
   return (
     <section>
-      <div className="page-heading simple-heading"><div><span className="section-kicker">Rishte</span><h1>Eligible members</h1></div></div>
-      {error && <p className="error">{error}</p>}
+      <PageHeading icon="rishte" title="Rishte" description="Meaningful introductions within the community."/>
+      <Notice>{error}</Notice>
       <div className="split-layout">
         <div>
-          <form className="filters" onSubmit={(e) => { e.preventDefault(); void load(); }}>
-            <input placeholder="Name, education or occupation" value={filter.q} onChange={(e) => setFilter({ ...filter, q: e.target.value })} />
-            <input placeholder="City" value={filter.city} onChange={(e) => setFilter({ ...filter, city: e.target.value })} />
-            <select value={filter.gender} onChange={(e) => setFilter({ ...filter, gender: e.target.value })}><option value="">Any gender</option><option>Male</option><option>Female</option><option>Other</option></select>
-            <button>Search</button>
+          <form className="filters" onSubmit={event => { event.preventDefault(); void perform(() => load()); }} aria-label="Search Rishte listings">
+            <label>Find a member<input placeholder="Name, education, occupation" value={filter.q} onChange={e => setFilter({ ...filter, q: e.target.value })}/></label>
+            <label>City<input placeholder="Any city" value={filter.city} onChange={e => setFilter({ ...filter, city: e.target.value })}/></label>
+            <label>Gender<select value={filter.gender} onChange={e => setFilter({ ...filter, gender: e.target.value })}><option value="">Any gender</option><option>Male</option><option>Female</option><option>Other</option></select></label>
+            <button disabled={working}><Icon name="search"/>Search</button>
           </form>
-          <div className="card-list">
-            {profiles.map((profile) => (
-              <article className="plain-card rishte-card" key={profile.id}>
-                <div className="card-head"><MemberLine member={profile} /><span className="verify-chip">Verified</span></div>
+          <div className="card-list" aria-busy={loading}>
+            {loading && <LoadingState label="Finding community listings…"/>}
+            {profiles.map(profile => <article className="plain-card rishte-card" key={profile.id}>
+              <div className="card-head"><MemberLine member={profile}/><span className="verify-chip"><Icon name="check"/>Verified</span></div>
+              <div className="profile-story">
                 {profile.rishte.headline && <h3>{profile.rishte.headline}</h3>}
                 <p>{profile.rishte.bio || profile.about || "No introduction yet."}</p>
-                {profile.rishte.familyNote && <p><strong>Family</strong> {profile.rishte.familyNote}</p>}
-                {profile.rishte.lookingFor && <p><strong>Looking for</strong> {profile.rishte.lookingFor}</p>}
-                <div className="button-row">
-                  {profile.relationship?.status === "NONE" ? <button onClick={() => send(profile)}>Send interest</button> : <span className="status-pill">{fmt(profile.relationship.status)}</span>}
-                </div>
-              </article>
-            ))}
-            {!profiles.length && <div className="empty-state">No matching listings.</div>}
+                {profile.rishte.familyNote && <div className="profile-detail"><strong>Family</strong><p>{profile.rishte.familyNote}</p></div>}
+                {profile.rishte.lookingFor && <div className="profile-detail"><strong>Looking for</strong><p>{profile.rishte.lookingFor}</p></div>}
+              </div>
+              <div className="button-row">{profile.relationship?.status === "NONE" ? <button disabled={working} onClick={() => void perform(() => send(profile))}><Icon name="rishte"/>Send interest</button> : <span className="status-pill">{fmt(profile.relationship?.status)}</span>}</div>
+            </article>)}
+            {!loading && !error && !profiles.length && <EmptyState icon="search" title="No matching listings">Try a different name, city, or gender.</EmptyState>}
           </div>
         </div>
-
-        <aside className="side-panel rishte-side">
-          {!mine && !editing ? (
-            <div className="listing-empty"><h2>Your listing</h2><p>You are not listed in Rishte.</p><button onClick={() => setEditing(true)}>Create listing</button></div>
-          ) : mine && !editing ? (
-            <div className="listing-summary">
-              <div className="card-head"><h2>Your listing</h2><span className={mine.isActive ? "status-pill" : "muted-chip"}>{mine.isActive ? "Visible" : "Paused"}</span></div>
-              <h3>{mine.headline || "Rishte listing"}</h3>
-              {mine.bio && <p>{mine.bio}</p>}
-              <div className="button-row"><button onClick={() => setEditing(true)}>Edit</button><button className="ghost" onClick={toggleListing}>{mine.isActive ? "Pause" : "Publish"}</button><button className="text-button danger-link" onClick={removeListing}>Delete</button></div>
-            </div>
-          ) : (
-            <form className="stack" onSubmit={save}>
-              <div className="card-head"><h2>{mine ? "Edit listing" : "Create listing"}</h2>{mine && <button type="button" className="text-button" onClick={() => setEditing(false)}>Cancel</button>}</div>
-              <label>Headline<input value={edit.headline} onChange={(e) => setEdit({ ...edit, headline: e.target.value })} /></label>
-              <label>About<textarea rows={4} value={edit.bio} onChange={(e) => setEdit({ ...edit, bio: e.target.value })} /></label>
-              <label>Family note<textarea rows={3} value={edit.familyNote} onChange={(e) => setEdit({ ...edit, familyNote: e.target.value })} /></label>
-              <label>Looking for<textarea rows={3} value={edit.lookingFor} onChange={(e) => setEdit({ ...edit, lookingFor: e.target.value })} /></label>
-              <button>Save listing</button>
-            </form>
-          )}
-          <hr />
-          <h3>Incoming interests</h3>
-          {interests.received.map((interest: any) => (
-            <div className="request-row" key={interest.id}><MemberLine member={interest.member} /><span>{fmt(interest.status)}</span>{interest.status === "PENDING" && <div className="button-row"><button onClick={() => act(interest.id, "ACCEPT")}>Accept</button><button className="ghost" onClick={() => act(interest.id, "DECLINE")}>Decline</button></div>}</div>
-          ))}
-          {!interests.received.length && <p className="muted">None yet.</p>}
+        <aside className="side-panel rishte-side" aria-label="Your listing and interests">
+          {loading && !mine ? <LoadingState label="Loading your listing…"/> : !mine && !editing ? <div className="listing-empty"><Icon name="rishte"/><h2>Your listing</h2><p>You are not listed in Rishte. Introduce yourself when you are ready.</p><button onClick={() => setEditing(true)}><Icon name="plus"/>Create listing</button></div> : mine && !editing ? <div className="listing-summary">
+            <div className="card-head"><h2>Your listing</h2><span className={mine.isActive ? "status-pill" : "muted-chip"}>{mine.isActive ? "Visible" : "Paused"}</span></div>
+            <h3>{mine.headline || "Rishte listing"}</h3>{mine.bio && <p>{mine.bio}</p>}
+            <div className="button-row"><button onClick={() => setEditing(true)}><Icon name="edit"/>Edit</button><button className="ghost" disabled={working} onClick={() => void perform(toggleListing)}>{mine.isActive ? "Pause" : "Publish"}</button><button className="text-button danger-link" disabled={working} onClick={() => void perform(removeListing)}>Delete</button></div>
+          </div> : <form className="stack" onSubmit={event => { event.preventDefault(); void perform(() => save(event)); }} aria-busy={working}>
+            <div className="card-head"><h2>{mine ? "Edit listing" : "Create listing"}</h2>{mine && <button type="button" className="text-button" onClick={() => setEditing(false)}>Cancel</button>}</div>
+            <label>Headline<input value={edit.headline} onChange={e => setEdit({ ...edit, headline: e.target.value })}/></label>
+            <label>About<textarea rows={4} value={edit.bio} onChange={e => setEdit({ ...edit, bio: e.target.value })}/></label>
+            <label>Family note<textarea rows={3} value={edit.familyNote} onChange={e => setEdit({ ...edit, familyNote: e.target.value })}/></label>
+            <label>Looking for<textarea rows={3} value={edit.lookingFor} onChange={e => setEdit({ ...edit, lookingFor: e.target.value })}/></label>
+            <button disabled={working}>{working ? "Saving…" : "Save listing"}</button>
+          </form>}
+          <hr/><div className="card-head"><h3>Incoming interests</h3><span className="count-badge">{interests.received.length}</span></div>
+          {interests.received.map((interest: any) => <div className="request-row" key={interest.id}><MemberLine member={interest.member}/><span className="status-pill neutral">{fmt(interest.status)}</span>{interest.status === "PENDING" && <div className="button-row"><button disabled={working} onClick={() => void perform(() => act(interest.id, "ACCEPT"))}>Accept</button><button className="ghost" disabled={working} onClick={() => void perform(() => act(interest.id, "DECLINE"))}>Decline</button></div>}</div>)}
+          {!loading && !interests.received.length && <p className="muted">New interests will appear here.</p>}
         </aside>
       </div>
     </section>
@@ -410,6 +389,8 @@ function Family({ me }: { me: Member }) {
   const [search, setSearch] = useState("");
   const [searched, setSearched] = useState(false);
   const [error, setError] = useState("");
+  const { working, perform } = useAction(setError);
+  const [feedback, setFeedback] = useState("");
   const [relative, setRelative] = useState({ relativeName: "", relation: "SIBLING", relationLabel: "" });
   const [claim, setClaim] = useState("");
 
@@ -458,7 +439,7 @@ function Family({ me }: { me: Member }) {
     setRelative({ relativeName: "", relation: "SIBLING", relationLabel: "" });
     await loadFamily();
     await viewTree(me.id);
-    window.alert(`Family code: ${result.link.inviteCode}`);
+    setFeedback(`Relative added. Family code: ${result.link.inviteCode}`);
   }
 
   async function claimCode(event: FormEvent) {
@@ -482,35 +463,29 @@ function Family({ me }: { me: Member }) {
 
   return (
     <section>
-      <div className="page-heading simple-heading"><div><span className="section-kicker">Family tree</span><h1>Your family</h1></div></div>
-      {error && <p className="error">{error}</p>}
+      <PageHeading icon="family" title="Your family" description="Every connection has a place."/>
+      <Notice>{error}</Notice><Notice kind="success">{feedback}</Notice>
+      <section className="panel tree-panel">
+        <div className="tree-panel-heading"><div><span className="section-kicker">Connected across generations</span><h2>{tree?.rootId && tree.rootId !== me.id ? `${tree.nodes.find((node: any) => node.id === tree.rootId)?.displayName || "Member"}'s family tree` : "Family tree"}</h2></div>{tree && <span className="count-badge">{tree.nodes.length} {tree.nodes.length === 1 ? "person" : "people"}</span>}</div>
+        {tree ? <FamilyTree tree={tree} memberId={me.id}/> : error ? <EmptyState icon="family" title="Family tree unavailable">Open Family tree again to retry.</EmptyState> : <LoadingState label="Bringing your family together…"/>}
+      </section>
       <div className="family-layout">
-        <div>
-          <section className="panel tree-panel">
-            <div className="card-head"><h2>Family tree</h2>{tree && <span>{tree.nodes.length} people</span>}</div>
-            {tree ? <><div className="tree-nodes">{tree.nodes.map((node: any) => <div className={node.registered ? "tree-node" : "tree-node guest"} key={node.id}><strong>{node.displayName}</strong><small>{node.registered ? `@${node.username}` : "Not registered"}</small></div>)}</div><div className="edge-list">{tree.edges.map((edge: any) => <div key={edge.id}><span>{tree.nodes.find((node: any) => node.id === edge.from)?.displayName}</span><b>— {fmt(edge.relationLabel || edge.relation)} →</b><span>{tree.nodes.find((node: any) => node.id === edge.to)?.displayName}</span></div>)}</div></> : <p className="muted">Loading tree…</p>}
-          </section>
-
-          <section className="panel family-manage">
-            <h2>Manage family</h2>
-            <div className="family-links">{data.links.map((link: any) => <article className="family-link" key={link.id}><div><strong>{link.owner.id === me.id ? link.relativeName : link.owner.displayName}</strong><span>{fmt(link.relationLabel || link.relation)} · {fmt(link.status)}</span></div>{link.status === "INVITED" && <code>{link.inviteCode}</code>}</article>)}</div>
-            <form className="inline-form" onSubmit={addRelative}><input placeholder="Relative's name" value={relative.relativeName} onChange={(e) => setRelative({ ...relative, relativeName: e.target.value })} required /><select value={relative.relation} onChange={(e) => setRelative({ ...relative, relation: e.target.value })}><option value="PARENT">Parent</option><option value="CHILD">Child</option><option value="SIBLING">Sibling</option><option value="SPOUSE">Spouse</option><option value="OTHER">Other</option></select><input placeholder="Label, e.g. Brother" value={relative.relationLabel} onChange={(e) => setRelative({ ...relative, relationLabel: e.target.value })} /><button>Add</button></form>
-            <form className="inline-form compact" onSubmit={claimCode}><input placeholder="Family code" value={claim} onChange={(e) => setClaim(e.target.value.toUpperCase())} /><button>Connect account</button></form>
-          </section>
-        </div>
-
+        <section className="panel family-manage">
+          <div className="section-heading"><div><h2>Manage family</h2><p className="muted">Add relatives or connect with a family code.</p></div><Icon name="family"/></div>
+          <div className="family-links">{data.links.map((link: any) => <article className="family-link" key={link.id}><Avatar name={link.owner.id === me.id ? link.relativeName : link.owner.displayName} small/><div><strong>{link.owner.id === me.id ? link.relativeName : link.owner.displayName}</strong><span>{fmt(link.relationLabel || link.relation)} · {fmt(link.status)}</span></div>{link.status === "INVITED" && <div className="family-code"><small>Family code</small><code>{link.inviteCode}</code></div>}</article>)}</div>
+          <form className="family-add-form" onSubmit={event => { event.preventDefault(); void perform(() => addRelative(event)); }} aria-busy={working}>
+            <h3>Add a relative</h3><div className="form-grid two"><label>Relative’s name<input placeholder="Full name" value={relative.relativeName} onChange={e => setRelative({ ...relative, relativeName: e.target.value })} required/></label><label>Relationship<select value={relative.relation} onChange={e => setRelative({ ...relative, relation: e.target.value })}><option value="PARENT">Parent</option><option value="CHILD">Child</option><option value="SIBLING">Sibling</option><option value="SPOUSE">Spouse</option><option value="OTHER">Other</option></select></label></div>
+            <div className="family-add-bottom"><label>Relationship label <span className="field-note">Optional</span><input placeholder="For example, Brother" value={relative.relationLabel} onChange={e => setRelative({ ...relative, relationLabel: e.target.value })}/></label><button disabled={working}><Icon name="plus"/>Add relative</button></div>
+          </form>
+          <form className="claim-form" onSubmit={event => { event.preventDefault(); void perform(() => claimCode(event)); }} aria-busy={working}><div><Icon name="family"/><h3>Have a family code?</h3></div><p>Connect your account to an existing family invitation.</p><div className="search-row"><label><span className="sr-only">Family code</span><input placeholder="Enter family code" autoCapitalize="characters" spellCheck={false} value={claim} onChange={e => setClaim(e.target.value.toUpperCase())}/></label><button className="secondary" disabled={working}>Connect account</button></div></form>
+        </section>
         <aside className="side-panel family-search-panel">
-          <h2>Find another family</h2>
-          <form className="search-row" onSubmit={searchFamilies}><input placeholder="Name or username" value={search} onChange={(e) => setSearch(e.target.value)} /><button>Search</button></form>
-          {!searched && <p className="muted search-hint">Search for someone outside your connected family.</p>}
-          {searched && directory.map((person) => {
-            const access = data.outgoingAccess.find((item: any) => item.member.id === person.id);
-            return <div className="request-row" key={person.id}><MemberLine member={person} /><div className="button-row">{access?.status === "APPROVED" ? <button onClick={() => viewTree(person.id)}>View tree</button> : access?.status === "PENDING" ? <span className="status-pill">Requested</span> : <button className="ghost" onClick={() => requestAccess(person.id)}>Request tree</button>}</div></div>;
-          })}
+          <h2>Find another family</h2><form className="search-row" onSubmit={event => { event.preventDefault(); void perform(() => searchFamilies(event)); }}><label><span className="sr-only">Name or username</span><input placeholder="Name or username" value={search} onChange={e => setSearch(e.target.value)}/></label><button disabled={working}>Search</button></form>
+          {!searched && <p className="muted search-hint">Search for someone outside your connected family. Their approval is required to view their tree.</p>}
+          {searched && directory.map(person => { const access = data.outgoingAccess.find((item: any) => item.member.id === person.id); return <div className="request-row" key={person.id}><MemberLine member={person}/><div className="button-row">{access?.status === "APPROVED" ? <button disabled={working} onClick={() => void perform(() => viewTree(person.id))}>View tree</button> : access?.status === "PENDING" ? <span className="status-pill">Requested</span> : <button className="ghost" disabled={working} onClick={() => void perform(() => requestAccess(person.id))}>Request tree</button>}</div></div>; })}
           {searched && !directory.length && <p className="muted">No results outside your family.</p>}
-          <hr />
-          <h3>Access requests</h3>
-          {data.incomingAccess.map((item: any) => <div className="request-row" key={item.id}><MemberLine member={item.member} /><span>{fmt(item.status)}</span>{item.status === "PENDING" && <div className="button-row"><button onClick={() => actAccess(item.id, "APPROVE")}>Approve</button><button className="ghost" onClick={() => actAccess(item.id, "DECLINE")}>Decline</button></div>}</div>)}
+          <hr/><div className="card-head"><h3>Access requests</h3><Icon name="lock"/></div>
+          {data.incomingAccess.map((item: any) => <div className="request-row" key={item.id}><MemberLine member={item.member}/><span className="status-pill neutral">{fmt(item.status)}</span>{item.status === "PENDING" && <div className="button-row"><button disabled={working} onClick={() => void perform(() => actAccess(item.id, "APPROVE"))}>Approve</button><button className="ghost" disabled={working} onClick={() => void perform(() => actAccess(item.id, "DECLINE"))}>Decline</button></div>}</div>)}
           {!data.incomingAccess.length && <p className="muted">No pending requests.</p>}
         </aside>
       </div>
@@ -522,6 +497,9 @@ function Community({ me }: { me: Member }) {
   const [posts, setPosts] = useState<any[]>([]);
   const [body, setBody] = useState("");
   const [error, setError] = useState("");
+  const { working, perform } = useAction(setError);
+  const [loading, setLoading] = useState(true);
+  const [feedback, setFeedback] = useState("");
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
 
   async function load() {
@@ -530,7 +508,7 @@ function Community({ me }: { me: Member }) {
       setError("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load community");
-    }
+    } finally { setLoading(false); }
   }
 
   useEffect(() => { void load(); }, []);
@@ -570,29 +548,24 @@ function Community({ me }: { me: Member }) {
       return;
     }
     await navigator.clipboard.writeText(text);
-    window.alert("Post copied");
+    setFeedback("Post copied to your clipboard.");
   }
 
   return (
     <section className="narrow-page community-page">
-      <div className="page-heading simple-heading"><div><span className="section-kicker">Community</span><h1>Community board</h1></div></div>
-      {error && <p className="error">{error}</p>}
-      <form className="composer" onSubmit={publish}><textarea rows={3} placeholder="Write an update…" value={body} onChange={(e) => setBody(e.target.value)} maxLength={2500} /><div><small>{body.length}/2500</small><button disabled={!body.trim()}>Post</button></div></form>
-      <div className="feed">
-        {posts.map((post: any) => (
-          <article className="post social-post" key={post.id}>
-            <div className="post-meta"><MemberLine member={post.author} /><time>{new Date(post.createdAt).toLocaleString()}</time></div>
-            <p>{post.body}</p>
-            <div className="post-actions">
-              <button className={post.likedByMe ? "post-action active" : "post-action"} onClick={() => like(post.id)}>Like{post.likeCount ? ` ${post.likeCount}` : ""}</button>
-              <button className="post-action" onClick={() => document.getElementById(`comment-${post.id}`)?.focus()}>Comment{post.commentCount ? ` ${post.commentCount}` : ""}</button>
-              <button className="post-action" onClick={() => share(post)}>Share</button>
-              {post.author.id === me.id && <button className="post-action danger-link" onClick={() => remove(post.id)}>Delete</button>}
-            </div>
-            {post.comments.length > 0 && <div className="comments">{post.comments.map((item: any) => <div className="comment" key={item.id}><strong>{item.author.displayName}</strong><p>{item.body}</p></div>)}</div>}
-            <form className="comment-form" onSubmit={(event) => comment(event, post.id)}><input id={`comment-${post.id}`} placeholder="Write a comment" value={commentDrafts[post.id] || ""} onChange={(e) => setCommentDrafts((current) => ({ ...current, [post.id]: e.target.value }))} /><button disabled={!commentDrafts[post.id]?.trim()}>Post</button></form>
-          </article>
-        ))}
+      <PageHeading icon="community" title="Community board" description="Updates, conversations, and everyday connections."/>
+      <Notice>{error}</Notice><Notice kind="success">{feedback}</Notice>
+      <form className="composer" onSubmit={event => { event.preventDefault(); void perform(() => publish(event)); }} aria-busy={working}><div className="composer-header"><Avatar name={me.displayName} small/><strong>What would you like to share?</strong></div><label><span className="sr-only">Write an update</span><textarea rows={3} placeholder="Share a thought or an update with the community…" value={body} onChange={e => setBody(e.target.value)} maxLength={2500}/></label><div className="composer-footer"><small>{body.length} / 2500</small><button disabled={!body.trim() || working}><Icon name="plus"/>{working ? "Please wait…" : "Post update"}</button></div></form>
+      <div className="feed-heading"><h2>Latest from the community</h2></div>
+      {loading && <LoadingState label="Loading community updates…"/>}
+      {!loading && !error && !posts.length && <EmptyState icon="community" title="Start the conversation">Your community updates will appear here.</EmptyState>}
+      <div className="feed" aria-busy={loading}>
+        {posts.map((post: any) => <article className="post" key={post.id}>
+          <div className="post-meta"><MemberLine member={post.author}/><time dateTime={post.createdAt}>{new Date(post.createdAt).toLocaleString()}</time></div><p dir="auto">{post.body}</p>
+          <div className="post-actions"><button className={post.likedByMe ? "post-action active" : "post-action"} aria-pressed={post.likedByMe} disabled={working} onClick={() => void perform(() => like(post.id))}><Icon name="heart"/>Like{post.likeCount ? ` ${post.likeCount}` : ""}</button><button className="post-action" onClick={() => document.getElementById(`comment-${post.id}`)?.focus()}><Icon name="messages"/>Comment{post.commentCount ? ` ${post.commentCount}` : ""}</button><button className="post-action" onClick={() => void perform(() => share(post))}><Icon name="share"/>Share</button>{post.author.id === me.id && <button className="post-action danger-link" disabled={working} onClick={() => void perform(() => remove(post.id))}>Delete</button>}</div>
+          {post.comments.length > 0 && <div className="comments">{post.comments.map((item: any) => <div className="comment" key={item.id}><Avatar name={item.author.displayName} small/><div><strong>{item.author.displayName}</strong><p dir="auto">{item.body}</p></div></div>)}</div>}
+          <form className="comment-form" onSubmit={event => { event.preventDefault(); void perform(() => comment(event, post.id)); }}><Avatar name={me.displayName} small/><input aria-label={`Comment on ${post.author.displayName}'s post`} id={`comment-${post.id}`} placeholder="Write a comment…" value={commentDrafts[post.id] || ""} onChange={e => setCommentDrafts(current => ({ ...current, [post.id]: e.target.value }))}/><button className="secondary" disabled={!commentDrafts[post.id]?.trim() || working}>Post</button></form>
+        </article>)}
       </div>
     </section>
   );
@@ -605,8 +578,45 @@ function Messages({ me }: { me: Member }) {
   const [q, setQ] = useState("");
   const [text, setText] = useState("");
   const [error, setError] = useState("");
+  const { working, perform } = useAction(setError);
+  const [loading, setLoading] = useState(true);
+  const [opening, setOpening] = useState(false);
+  const [searched, setSearched] = useState(false);
+  const [mobileThreadOpen, setMobileThreadOpen] = useState(false);
+  const pageRef = useRef<HTMLElement>(null);
+  const logRef = useRef<HTMLDivElement>(null);
+  const previousThread = useRef<string | null>(null);
+  const previousMessageIds = useRef(new Set<string>());
+  const nearBottom = useRef(true);
   const [unlockPassword, setUnlockPassword] = useState("");
   const [unlocked, setUnlocked] = useState(secureMessagingUnlocked(me.id));
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const resize = () => pageRef.current?.style.setProperty("--chat-viewport", `${viewport?.height || window.innerHeight}px`);
+    resize();
+    viewport?.addEventListener("resize", resize);
+    window.addEventListener("resize", resize);
+    return () => { viewport?.removeEventListener("resize", resize); window.removeEventListener("resize", resize); };
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!active || !logRef.current) return;
+    const last = active.messages.at(-1);
+    if (previousThread.current !== active.id || nearBottom.current || last?.senderId === me.id) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+      nearBottom.current = true;
+    }
+    previousThread.current = active.id;
+    previousMessageIds.current = new Set(active.messages.map((message: any) => message.id));
+  }, [active?.id, active?.messages.at(-1)?.id, opening, mobileThreadOpen]);
+
+  async function showConversation(action: () => Promise<unknown>) {
+    setMobileThreadOpen(true);
+    setOpening(true);
+    await perform(action);
+    setOpening(false);
+  }
 
   async function load() {
     try {
@@ -615,7 +625,7 @@ function Messages({ me }: { me: Member }) {
       setError("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load messages");
-    }
+    } finally { setLoading(false); }
   }
 
   useEffect(() => { void load(); }, []);
@@ -630,6 +640,7 @@ function Messages({ me }: { me: Member }) {
     if (q.trim().length < 2) return;
     const result = await api(`/directory?q=${encodeURIComponent(q.trim())}`);
     setMembers(result.members);
+    setSearched(true);
   }
 
   async function open(id: string) {
@@ -686,28 +697,40 @@ function Messages({ me }: { me: Member }) {
     }
   }
 
-  return (
-    <section>
-      <div className="page-heading simple-heading"><div><span className="section-kicker">Messages</span><h1>Conversations</h1></div><div className="secure-label"><span>●</span> End-to-end encrypted</div></div>
-      {error && <p className="error">{error}</p>}
-      {!unlocked && <form className="unlock-strip" onSubmit={unlock}><span>Secure messages are locked on this browser.</span><input type="password" placeholder="Account password" value={unlockPassword} onChange={(e) => setUnlockPassword(e.target.value)} /><button>Unlock</button></form>}
-      <div className="messages-layout">
-        <aside className="thread-list">
-          <h3>Conversations</h3>
-          {threads.map((thread: any) => <button className={active?.id === thread.id ? "thread active" : "thread"} key={thread.id} onClick={() => open(thread.id)}><MemberLine member={thread.member} />{thread.lastMessage && <small className="preview">{thread.lastMessage.encrypted ? "Encrypted message" : thread.lastMessage.body}</small>}</button>)}
-          <hr />
-          <form className="search-row" onSubmit={findMembers}><input placeholder="Find member" value={q} onChange={(e) => setQ(e.target.value)} /><button>Find</button></form>
-          {members.slice(0, 8).map((person) => <button className="thread" key={person.id} onClick={() => start(person.id)}><MemberLine member={person} /><small>Start conversation</small></button>)}
-        </aside>
-        <div className="chat-panel">
-          {active ? <><div className="chat-head"><MemberLine member={active.member} /><span className={active.encryptionReady ? "secure-state" : "secure-state pending"}>{active.encryptionReady ? "Encrypted" : "Waiting for secure setup"}</span></div><div className="chat-log">{active.messages.map((message: any) => <div className={message.senderId === me.id ? "bubble mine" : "bubble"} key={message.id}><p>{message.plain ?? "🔒 Unlock secure messages to read this"}</p>{message.legacy && <small className="legacy-note">Earlier unencrypted message</small>}<small>{new Date(message.createdAt).toLocaleString()}</small></div>)}</div><form className="chat-compose" onSubmit={send}><input placeholder="Write a message" value={text} onChange={(e) => setText(e.target.value)} disabled={!active.encryptionReady} /><button disabled={!text.trim() || !active.encryptionReady}>Send</button></form></> : <div className="empty-state">Choose a conversation.</div>}
+  return <section className="messages-page" ref={pageRef}>
+    <PageHeading icon="messages" title="Conversations" description="A little closer, wherever you are."><span className="secure-label"><Icon name="lock"/>End-to-end encrypted</span></PageHeading>
+    {!mobileThreadOpen && <Notice>{error}</Notice>}
+    {!unlocked && <form className="unlock-strip" onSubmit={event => { event.preventDefault(); void perform(() => unlock(event)); }}><span>Secure messages are locked on this browser.</span><input type="password" autoComplete="current-password" aria-label="Account password" placeholder="Account password" value={unlockPassword} onChange={e => setUnlockPassword(e.target.value)}/><button disabled={working}>Unlock</button></form>}
+    <div className={`messages-layout${mobileThreadOpen ? " thread-open" : ""}`}>
+      <aside className="thread-list" aria-label="Conversations">
+        <h2>Your conversations <span className="count-badge">{threads.length}</span></h2>
+        {loading && <LoadingState label="Loading conversations…"/>}
+        {!loading && !error && !threads.length && <EmptyState icon="messages" title="Say hello">Find a member below to start a conversation.</EmptyState>}
+        {threads.map((thread: any) => <button className={active?.id === thread.id ? "thread active" : "thread"} key={thread.id} aria-current={active?.id === thread.id ? "true" : undefined} disabled={opening} onClick={() => void showConversation(() => open(thread.id))}><MemberLine member={thread.member}/>{thread.lastMessage && <small className="preview">{thread.lastMessage.encrypted ? "Encrypted message" : thread.lastMessage.body}</small>}</button>)}
+        <div className="thread-search"><h3>Start a conversation</h3><form className="search-row" onSubmit={event => { event.preventDefault(); void perform(() => findMembers(event)); }}><input aria-label="Find a member" placeholder="Name or username" value={q} onChange={e => setQ(e.target.value)}/><button className="secondary" disabled={working}>Find</button></form>
+          {members.slice(0, 8).map(person => <button className="thread" key={person.id} disabled={opening} onClick={() => void showConversation(() => start(person.id))}><MemberLine member={person}/><small className="preview">Start conversation</small></button>)}
+          {searched && !members.length && <p className="muted">No matching members.</p>}
         </div>
+      </aside>
+      <div className="chat-panel">
+        {mobileThreadOpen && <Notice>{error}</Notice>}
+        {opening ? <><div className="chat-head"><button className="icon-button mobile-chat-back" aria-label="Back to conversations" onClick={() => setMobileThreadOpen(false)}><Icon name="back"/></button><h2>Opening conversation</h2></div><LoadingState label="Loading your messages…"/></> : active ? <>
+          <div className="chat-head"><button className="icon-button mobile-chat-back" aria-label="Back to conversations" onClick={() => setMobileThreadOpen(false)}><Icon name="back"/></button><MemberLine member={active.member}/><span className={active.encryptionReady ? "secure-state" : "secure-state pending"}><Icon name="lock"/>{active.encryptionReady ? "Encrypted" : "Waiting for secure setup"}</span></div>
+          <div className="chat-log" ref={logRef} role="log" aria-label={`Messages with ${active.member.displayName}`} aria-relevant="additions" onScroll={() => { const node = logRef.current; if (node) nearBottom.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }}>
+            {!active.messages.length && <EmptyState icon="messages" title="Your conversation starts here">Send your first message when you are ready.</EmptyState>}
+            {active.messages.map((message: any) => <div className={`bubble${message.senderId === me.id ? " mine" : ""}${previousThread.current === active.id && !previousMessageIds.current.has(message.id) ? " arriving" : ""}`} key={message.id}><p dir="auto">{message.plain ?? "Unlock secure messages to read this"}</p>{message.legacy && <small className="legacy-note">Earlier unencrypted message</small>}<small><time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleString()}</time></small></div>)}
+          </div>
+          <form className="chat-compose" onSubmit={event => { event.preventDefault(); void perform(() => send(event)); }}><input aria-label="Write a message" placeholder="Write a message…" value={text} onChange={e => setText(e.target.value)} disabled={!active.encryptionReady}/><button disabled={!text.trim() || !active.encryptionReady || working}><Icon name="send"/>{working ? "Sending…" : "Send"}</button></form>
+        </> : <><button className="text-button mobile-chat-back" onClick={() => setMobileThreadOpen(false)}><Icon name="back"/>Conversations</button><EmptyState icon="messages" title="Room for a conversation">Choose a conversation or find someone from the community.</EmptyState></>}
       </div>
-    </section>
-  );
+    </div>
+  </section>;
 }
 
 function Settings({ member, setMember }: { member: Member; setMember: (member: Member) => void }) {
+  const [error, setError] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const { working, perform } = useAction(setError);
   const [edit, setEdit] = useState({
     displayName: member.displayName,
     city: member.city || "",
@@ -730,29 +753,33 @@ function Settings({ member, setMember }: { member: Member; setMember: (member: M
       body: JSON.stringify({ ...edit, dateOfBirth: edit.dateOfBirth || undefined, gender: edit.gender || undefined, city: edit.city || undefined, state: edit.state || undefined }),
     });
     setMember(updated);
-    window.alert("Saved");
+    setError("");
+    setFeedback("Your profile has been saved.");
   }
 
-  return (
-    <section className="narrow-page account-page">
-      <div className="page-heading simple-heading"><div><span className="section-kicker">Account</span><h1>Profile</h1></div></div>
-      <form className="panel stack" onSubmit={save}>
-        <div className="form-grid two">
-          <label>Name<input value={edit.displayName} onChange={(e) => setEdit({ ...edit, displayName: e.target.value })} /></label>
-          <label>Date of birth<input type="date" value={edit.dateOfBirth} onChange={(e) => setEdit({ ...edit, dateOfBirth: e.target.value })} /></label>
-          <label>Gender<input value={edit.gender} onChange={(e) => setEdit({ ...edit, gender: e.target.value })} /></label>
-          <label>City<input value={edit.city} onChange={(e) => setEdit({ ...edit, city: e.target.value })} /></label>
-          <label>State<input value={edit.state} onChange={(e) => setEdit({ ...edit, state: e.target.value })} /></label>
-          <label>Country<input value={edit.country} onChange={(e) => setEdit({ ...edit, country: e.target.value })} /></label>
-          <label>Education<input value={edit.education} onChange={(e) => setEdit({ ...edit, education: e.target.value })} /></label>
-          <label>Occupation<input value={edit.occupation} onChange={(e) => setEdit({ ...edit, occupation: e.target.value })} /></label>
-          <label>Languages<input value={edit.languages} onChange={(e) => setEdit({ ...edit, languages: e.target.value })} /></label>
-          <label>Interests<input value={edit.interests} onChange={(e) => setEdit({ ...edit, interests: e.target.value })} /></label>
-        </div>
-        <label>About<textarea rows={5} value={edit.about} onChange={(e) => setEdit({ ...edit, about: e.target.value })} /></label>
-        <label className="toggle-row"><input type="checkbox" checked={edit.isDirectoryVisible} onChange={(e) => setEdit({ ...edit, isDirectoryVisible: e.target.checked })} />Allow registered members to find my account</label>
-        <button>Save changes</button>
-      </form>
-    </section>
-  );
+  return <section className="narrow-page account-page">
+    <PageHeading icon="account" title="Your account" description="The details that help your community know you."/>
+    <Notice>{error}</Notice>
+    <form className="panel account-form" onSubmit={event => { event.preventDefault(); void perform(() => save(event)); }} aria-busy={working}>
+      <div className="account-identity"><Avatar name={member.displayName}/><div><h2>{member.displayName}</h2><p>@{member.username}</p></div></div>
+      <section className="form-section"><h2>Personal details</h2><p>Your name and a little about you.</p><div className="form-grid two">
+        <label>Name<input autoComplete="name" value={edit.displayName} onChange={e => setEdit({ ...edit, displayName: e.target.value })}/></label>
+        <label>Date of birth<input type="date" autoComplete="bday" value={edit.dateOfBirth} onChange={e => setEdit({ ...edit, dateOfBirth: e.target.value })}/></label>
+        <label>Gender<input value={edit.gender} onChange={e => setEdit({ ...edit, gender: e.target.value })}/></label>
+        <label>Languages<input value={edit.languages} onChange={e => setEdit({ ...edit, languages: e.target.value })}/></label>
+      </div></section>
+      <section className="form-section"><h2>Where you are</h2><p>Keep your community connected across places.</p><div className="form-grid two">
+        <label>City<input autoComplete="address-level2" value={edit.city} onChange={e => setEdit({ ...edit, city: e.target.value })}/></label>
+        <label>State<input autoComplete="address-level1" value={edit.state} onChange={e => setEdit({ ...edit, state: e.target.value })}/></label>
+        <label>Country<input autoComplete="country-name" value={edit.country} onChange={e => setEdit({ ...edit, country: e.target.value })}/></label>
+      </div></section>
+      <section className="form-section"><h2>A little more about you</h2><p>Your work, interests, and introduction.</p><div className="form-grid two">
+        <label>Education<input value={edit.education} onChange={e => setEdit({ ...edit, education: e.target.value })}/></label>
+        <label>Occupation<input value={edit.occupation} onChange={e => setEdit({ ...edit, occupation: e.target.value })}/></label>
+        <label>Interests<input value={edit.interests} onChange={e => setEdit({ ...edit, interests: e.target.value })}/></label>
+      </div><label className="full-width">About<textarea rows={5} value={edit.about} onChange={e => setEdit({ ...edit, about: e.target.value })}/></label></section>
+      <section className="form-section"><h2>Directory visibility</h2><p>Choose whether members can find your account.</p><label className="toggle-row"><input type="checkbox" checked={edit.isDirectoryVisible} onChange={e => setEdit({ ...edit, isDirectoryVisible: e.target.checked })}/><span><strong>Allow registered members to find my account</strong><small>Your family tree still requires your approval to view.</small></span></label></section>
+      <div className="form-footer"><Notice kind="success">{feedback}</Notice><button disabled={working}><Icon name="check"/>{working ? "Saving…" : "Save changes"}</button></div>
+    </form>
+  </section>;
 }
