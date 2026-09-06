@@ -12,8 +12,10 @@
     "db:init": "npm run db:init -w @abbasiconnect/api",
     "db:upgrade": "npm run db:upgrade -w @abbasiconnect/api",
     "db:migrate": "npm run db:migrate -w @abbasiconnect/api",
+    "db:push": "npm run db:push -w @abbasiconnect/api",
     "db:seed": "npm run db:seed -w @abbasiconnect/api",
     "db:studio": "npm run db:studio -w @abbasiconnect/api",
+    "demo:setup": "docker compose up -d db && npm run db:generate && npm run db:push && npm run db:seed",
     "build": "npm run build -w @abbasiconnect/api && npm run build -w @abbasiconnect/web"
   },
   "devDependencies": {
