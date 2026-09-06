@@ -19,6 +19,18 @@ function adminLogout() {
 
 installPerformanceLayer();
 
+const appFetch = window.fetch.bind(window);
+window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  const method = (init?.method || (input instanceof Request ? input.method : "GET")).toUpperCase();
+  let path = url;
+  try { path = new URL(url, window.location.href).pathname; } catch { path = url.split("?")[0]; }
+  if (method === "POST" && /\/community\/posts\/[^/]+\/like$/.test(path) && init?.body == null) {
+    return appFetch(input, { ...init, body: "{}" });
+  }
+  return appFetch(input, init);
+}) as typeof window.fetch;
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     {adminRoute ? (

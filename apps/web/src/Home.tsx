@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Member, Module } from "./App";
 import { onRealtime } from "./realtime";
-import { Avatar, EmptyState, Icon, LoadingState, PageHeading, type IconName } from "./ui";
+import { Avatar, EmptyState, Icon, LoadingState, PageHeading } from "./ui";
 
 const truncate = (value: string, max = 115) => {
   const clean = value.replace(/\s+/g, " ").trim();
@@ -14,12 +14,6 @@ async function summaryApi(path: string) {
   if (!response.ok) throw new Error("Request failed");
   return response.json();
 }
-const modules: { id: Module; label: string; note: string; icon: IconName }[] = [
-  { id: "family", label: "Family tree", note: "People you belong with", icon: "family" },
-  { id: "rishte", label: "Rishte", note: "Meaningful introductions", icon: "rishte" },
-  { id: "community", label: "Community", note: "Life in our community", icon: "community" },
-  { id: "messages", label: "Messages", note: "Keep the conversation going", icon: "messages" },
-];
 
 export default function Home({ member, open }: { member: Member; open: (module: Module) => void }) {
   const [summaries, setSummaries] = useState<Record<string, any>>({});
@@ -50,7 +44,6 @@ export default function Home({ member, open }: { member: Member; open: (module: 
 
   return <div className="home-wrap">
     <PageHeading icon="home" title={`Welcome, ${member.displayName}`} description="Your family, your connections, your community."><span className="home-account"><Avatar name={member.displayName} small/>@{member.username}</span></PageHeading>
-    <nav className="home-shortcuts" aria-label="Explore AbbasiConnect">{modules.map(item => <button key={item.id} onClick={() => open(item.id)}><span className={`shortcut-icon shortcut-${item.id}`}><Icon name={item.icon}/></span><span><strong>{item.label}</strong><small>{item.note}</small></span><Icon name="arrow" className="shortcut-arrow"/></button>)}</nav>
     <div className="home-columns">
       <section className="home-activity panel">
         <div className="section-heading"><div><span className="section-kicker">From the community</span><h2>Recent conversations</h2></div><button className="text-button" onClick={() => open("community")}>View board <Icon name="arrow"/></button></div>
