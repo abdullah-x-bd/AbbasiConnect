@@ -100,5 +100,12 @@ if (!existingMessage) {
   });
 }
 
+// Keep automated end-to-end test accounts out of the production directory and database.
+// Only synthetic accounts with both the reserved QA prefix and non-deliverable test domain match.
+const qaCleanup = await prisma.user.deleteMany({
+  where: { username: { startsWith: "qa_" }, email: { endsWith: "@example.invalid" } },
+});
+console.log(`Removed ${qaCleanup.count} synthetic AbbasiConnect QA accounts`);
+
 console.log("AbbasiConnect demo data ready");
 await prisma.$disconnect();
