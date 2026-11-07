@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """End-to-end Android emulator UI verification against two isolated QA accounts."""
+import json
 import os
 import re
 import subprocess
@@ -9,8 +10,9 @@ from pathlib import Path
 
 OUT=Path("emulator-results")
 OUT.mkdir(parents=True,exist_ok=True)
-USER=os.environ["QA_USERNAME"]
-PASSWORD=os.environ["QA_PASSWORD"]
+SESSION=json.loads(Path("/tmp/abbasiconnect-qa-session.json").read_text())
+USER=SESSION["a"]["username"]
+PASSWORD=SESSION["a"]["password"]
 
 def adb(*a, timeout=50):
     return subprocess.run(["adb",*a],capture_output=True,text=True,check=True,timeout=timeout).stdout
