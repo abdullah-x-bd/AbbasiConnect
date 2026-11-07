@@ -1,0 +1,39 @@
+name: ABC Bahishti quality checks
+
+on:
+  push:
+    branches: [main, "feature/abc-bahishti"]
+    paths:
+      - "apps/api/src/abc/**"
+      - "apps/api/tests/abc-fields.test.mjs"
+      - "apps/api/prisma/schema.prisma"
+      - "apps/api/src/server-v2.ts"
+      - "apps/api/src/types.ts"
+      - "apps/bahishti/**"
+      - ".github/workflows/abc-ci.yml"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install workspaces
+        run: npm install --no-audit --no-fund
+      - name: Generate Prisma client
+        run: npm run db:generate
+      - name: Typecheck and build API
+        run: npm run build -w @abbasiconnect/api
+      - name: Validate ABC state engine
+        run: node --import tsx --test apps/api/tests/abc-fields.test.mjs
+      - name: Typecheck ABC Android app
+        run: npm run typecheck -w @abbasiconnect/bahishti
