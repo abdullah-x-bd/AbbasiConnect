@@ -54,6 +54,58 @@ try{
   const resumed=await request("/abc/resume","POST",{});
   assert.equal(resumed.session.phase,"COLLECTING");
   console.log("PASS mandatory-answer refusal and resume state machine");
+  created=await request("/abc/start","POST",{},201);
+  sessionToken=created.token;sessions.push(sessionToken);
+  for(const [field,value] of [["preferred_language","en"],["looking_for","bride"],["profile_for","self"]])
+    await request("/abc/choice","POST",{field,value});
+  const values={
+    "candidate.full_name":"ABC Test Candidate",
+    "candidate.gender":"male",
+    "candidate.age_years":27,
+    "candidate.height_cm":175,
+    "candidate.weight_kg":68,
+    "candidate.marital_status":"never married",
+    "candidate.current_location.city":"Delhi",
+    "candidate.current_location.state":"Delhi",
+    "candidate.current_location.country":"India",
+    "candidate.ancestral_location.city_or_town":"Aligarh",
+    "candidate.ancestral_location.district":"Aligarh",
+    "candidate.education.highest_qualification":"Bachelor's degree",
+    "candidate.education.institution":"ABC QA College",
+    "candidate.education.two_sentence_description":"I studied engineering. I graduated from college in Delhi.",
+    "candidate.occupation.profession_or_role":"Engineer",
+    "candidate.occupation.employer_or_business":"ABC Test Employer",
+    "candidate.languages":[{"name":"English","can_speak":true,"can_read":true,"can_write":true}],
+    "family.father.name":"QA Father",
+    "family.father.profession":"Engineer",
+    "family.father.education":"Bachelor's degree",
+    "family.mother.name":"QA Mother",
+    "family.mother.profession":"Homemaker",
+    "family.mother.education":"Bachelor's degree",
+    "family.siblings.brothers_count":0,
+    "family.siblings.sisters_count":1,
+    "family.family_introduction":"ABC test family",
+    "candidate.personal_introduction":"A researcher and engineer.",
+    "partner_preferences.preferred_age_range":"23 to 29",
+    "partner_preferences.preferred_cities_or_regions":["Delhi","Aligarh"],
+    "partner_preferences.education_preference":"Bachelor's degree",
+    "partner_preferences.profession_preference":"Any profession",
+    "partner_preferences.other_preferences":"Kind and respectful"
+  };
+  let final;
+  for(const [path,value] of Object.entries(values)){
+    final=(await request("/abc/edit","POST",{path,value})).session;
+  }
+  assert.equal(final.phase,"REVIEW","Completed JSON must transition to review");
+  assert.deepEqual(final.missingRequired,[]);
+  assert.equal(final.progress,100);
+  console.log("PASS entire profile JSON populated and deterministic review transition");
+  const reviewed=await request("/abc/review","POST",{confirmed:true,candidateConsent:true});
+  assert.equal(reviewed.session.phase,"VERIFY_PHONE");
+  await request("/abc/pin/create","POST",{pin:"123456"},409);
+  if(!health.smsConfigured)await request("/abc/verification/start","POST",{phone:"+919999999999"},503);
+  console.log("PASS profile confirmation and strict phone/PIN gateway");
+
 }finally{
   for(const t of sessions){
     sessionToken=t;
