@@ -4,7 +4,9 @@
  */
 import { prisma } from "../db.js";
 
-const tables=["AbcRegistration","AbcAccount","AbcSmsChallenge","AbcInterest"];
+const tables=["AbcRegistration","AbcAccount","AbcSmsChallenge","AbcInterest",
+  "User","OtpChallenge","FamilyLink","FamilyTreeAccess","RishteProfile","MatchInterest",
+  "Shortlist","Post","PostLike","PostComment","DirectThread","Message","Block","Report"];
 try{
   for(const table of tables){
     await prisma.$executeRawUnsafe('ALTER TABLE public."'+table+'" ENABLE ROW LEVEL SECURITY');
