@@ -10,7 +10,7 @@ export const st=StyleSheet.create({
   page:{flex:1,backgroundColor:T.paper},inner:{paddingHorizontal:24,paddingTop:24,paddingBottom:42,flexGrow:1},
   logo:{fontSize:35,fontWeight:"800",letterSpacing:-1.7,color:T.ink},
   app:{fontSize:14,color:T.muted,fontWeight:"600",marginTop:5,letterSpacing:.1},
-  h:{fontSize:29,color:T.ink,fontWeight:"750",letterSpacing:-.65,lineHeight:37},
+  h:{fontSize:29,color:T.ink,fontWeight:"700",letterSpacing:-.65,lineHeight:37},
   sub:{fontSize:16,color:T.muted,lineHeight:24,marginTop:7},
   roman:{fontSize:16,color:T.accent,lineHeight:23,marginTop:3},
   note:{fontSize:13,color:T.faint,lineHeight:19},
@@ -21,7 +21,7 @@ export const st=StyleSheet.create({
   btnRoman:{fontSize:13,color:"#D4EBE5",marginTop:3,textAlign:"center",fontWeight:"500"},
   input:{borderWidth:1.5,borderColor:T.border,borderRadius:15,minHeight:58,backgroundColor:T.white,
     color:T.ink,fontSize:19,paddingHorizontal:16,paddingVertical:12},
-  inputLabel:{fontSize:14,color:T.ink,fontWeight:"650",marginBottom:10},
+  inputLabel:{fontSize:14,color:T.ink,fontWeight:"600",marginBottom:10},
   topline:{height:1,backgroundColor:T.border,marginVertical:21},
   divider:{height:1,backgroundColor:T.line,marginVertical:14},
   back:{minWidth:50,minHeight:45,justifyContent:"center"},
@@ -71,7 +71,7 @@ export function Circle({text,onPress,kind="secondary",label,size=49,disabled=fal
   return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} disabled={disabled}
     style={{width:size,height:size,borderRadius:size/2,alignItems:"center",justifyContent:"center",
       borderWidth:kind==="secondary"?1:0,borderColor:T.border,backgroundColor:kind==="accent"?T.accent:T.white,opacity:disabled?.48:1}}>
-    <Text style={{fontSize:22,fontWeight:"650",color:kind==="accent"?T.white:T.accent}}>{text}</Text>
+    <Text style={{fontSize:22,fontWeight:"600",color:kind==="accent"?T.white:T.accent}}>{text}</Text>
   </Pressable>;
 }
 export function Back({onPress}: {onPress:()=>void}){
