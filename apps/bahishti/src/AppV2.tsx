@@ -145,6 +145,9 @@ function App(){
       setScreen("welcome");
     })();
   },[]);
+  useEffect(()=>{
+    if(!PREVIEW&&account&&(screen==="chat"||screen==="profile"))void openPhoto();
+  },[screen,account?.member?.id]);
   function previewNext(){
     const i=(previewIndex+1)%SCREENS.length;
     setPreviewIndex(i);
@@ -356,7 +359,7 @@ function App(){
   function chatScreen(){
     const messages=session?.messages||[];
     return <KeyboardAvoidingView style={st.page} behavior={Platform.OS==="ios"?"padding":undefined}>
-      {header("Conversation","" as any,"Baat-cheet")}
+      {header("Conversation",()=>Alert.alert("Saved / Save ho gaya","Your answers remain saved. / Jawaab save rahenge."),"Baat-cheet")}
       <View style={{paddingHorizontal:22,paddingBottom:10}}>
         <View style={st.progress}><View style={[st.progressFill,{width:(session?.progress||0)+"%"}]}/></View>
       </View>
