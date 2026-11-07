@@ -35,6 +35,7 @@ try{
       text:"My full name is Aftab Karim. I am 27 years old and currently live in Delhi. My family is originally from Aligarh.",
       version:before.version
     });
+    console.log("AI diagnostic:",JSON.stringify({classification:data.classification,accepted:data.changesAccepted,currentQuestion:data.session.currentQuestion,profile:{name:data.session.profile.candidate.full_name,age:data.session.profile.candidate.age_years,city:data.session.profile.candidate.current_location.city,ancestral:data.session.profile.candidate.ancestral_location.city_or_town},lastMessage:data.session.messages.at(-1)?.text?.slice(0,150)}));
     assert.equal(data.session.profile.candidate.full_name,"Aftab Karim");
     assert.equal(data.session.profile.candidate.age_years,27);
     assert.equal(data.session.profile.candidate.current_location.city,"Delhi");
