@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "ABC Bahishti Connections",
+    "slug": "abc-bahishti",
+    "scheme": "abcbahishti",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "android": {
+      "package": "org.abbasiconnect.bahishti",
+      "permissions": [
+        "RECORD_AUDIO"
+      ]
+    },
+    "ios": {
+      "bundleIdentifier": "org.abbasiconnect.bahishti",
+      "supportsTablet": true
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow ABC Bahishti Connections to record voice answers for transcription.",
+          "enableBackgroundRecording": false
+        }
+      ]
+    ],
+    "extra": {
+      "appName": "Abbasi Bahishti Connections"
+    }
+  }
+}
