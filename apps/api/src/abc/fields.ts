@@ -139,7 +139,7 @@ export function getLanguage(profile:Profile):Lang {
 export function nextQuestion(profile:Profile,states:FieldStates):FieldDef|null {
   for(const def of FIELDS) {
     const status=states[def.path]??"not_asked";
-    if(status==="answered"||status==="declined"||status==="unknown")continue;
+    if(status==="answered"||status==="declined"||(status==="unknown"&&(!def.required||def.allowUnknown)))continue;
     return def;
   }
   return null;
