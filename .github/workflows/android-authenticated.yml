@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "apps/mobile/tests/emulator-signedin.py"
+      - "apps/mobile/tests/live-e2e.mjs"
       - ".github/workflows/android-authenticated.yml"
   workflow_dispatch:
 
@@ -18,10 +19,13 @@ jobs:
     timeout-minutes: 70
     env:
       GH_TOKEN: ${{ github.token }}
-      QA_USERNAME: qa_a_42381582126
-      QA_PASSWORD: MobileQATest2026x
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Prepare two isolated QA accounts and test all API workflows
+        run: node apps/mobile/tests/live-e2e.mjs
       - name: Retrieve compiled release APK
         run: |
           mkdir -p emulator-apk
