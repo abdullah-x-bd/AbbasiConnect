@@ -91,7 +91,7 @@ function Application(){
   const [cityQuery,setCityQuery]=useState("");
   const [discovery,setDiscovery]=useState<Candidate[]>([]);
   const [interestData,setInterestData]=useState<{sent:any[];received:any[]}>({sent:[],received:[]});
-  const recorder=useAudioRecorder(RecordingPresets.LOW_QUALITY);
+  const recorder=useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const [recording,setRecording]=useState(false);
   const chatRef=useRef<ScrollViewInstance|null>(null);
   const lang:Lang=(session?.profile?.registration?.preferred_script as Lang)||"en";
