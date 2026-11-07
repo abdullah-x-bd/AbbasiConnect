@@ -6,7 +6,7 @@ const API = "https://abbasiconnect-api.onrender.com";
 const qs = async (path, options = {}) => {
   const response = await fetch(API + path, {
     method: options.method || "GET",
-    headers: { "content-type": "application/json", ...(options.token ? {authorization: "Bearer " + options.token} : {}) },
+    headers: { ...(options.body === undefined ? {} : {"content-type": "application/json"}), ...(options.token ? {authorization: "Bearer " + options.token} : {}) },
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
     signal: AbortSignal.timeout(50000)
   });
