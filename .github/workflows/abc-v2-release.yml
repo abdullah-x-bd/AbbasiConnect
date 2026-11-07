@@ -1,0 +1,43 @@
+name: Publish ABC v1.1 direct APK
+
+on:
+  workflow_run:
+    workflows: ["ABC Bahishti Android APK"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: abc-bahishti-v1.1.0
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download successful Android APK
+        run: |
+          mkdir -p abc-apk
+          RUN_ID="${{ github.event.workflow_run.id || '0' }}"
+          if [ "$RUN_ID" = "0" ]; then
+            echo "Use workflow_run or supply a known successful build"
+            exit 1
+          fi
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name ABC-Bahishti-Android-APK --dir abc-apk
+          test -s abc-apk/app-release.apk
+          cp abc-apk/app-release.apk ABC-Bahishti-Connections-v1.1.apk
+          file ABC-Bahishti-Connections-v1.1.apk
+      - name: Publish direct APK without ZIP extraction
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" ABC-Bahishti-Connections-v1.1.apk --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" ABC-Bahishti-Connections-v1.1.apk --repo "$GITHUB_REPOSITORY" --target main --title "ABC Bahishti Connections v1.1" --notes "Minimalist English and Roman Hindustani Android redesign. Sign up with a four-digit PIN before the conversational interview. Early phone verification is a clearly-labelled demo placeholder." --latest=false
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets
