@@ -369,7 +369,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
     const hash=await bcrypt.hash(body.data.pin,12);
     try{
       const account=await prisma.$transaction(async tx=>{
-        const user=await tx.abcAccount.create({data:{registrationId:d.id,phone:d.phone!,pinHash:hash}});
+        const user=await tx.abcAccount.create({data:{registrationId:d.id,phone:d.phone!,pinHash:hash,phoneVerified:true}});
         await tx.abcRegistration.update({where:{id:d.id},data:{phase:"COMPLETE",draftNonce:randomUUID(),reviewConfirmed:true}});
         return user;
       });
