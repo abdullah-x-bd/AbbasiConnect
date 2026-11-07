@@ -1,2 +1,2 @@
 const { registerRootComponent } = require("expo");
-registerRootComponent(require("./src/App").default);
+registerRootComponent(require("./src/AppV2").default);

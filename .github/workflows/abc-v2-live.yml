@@ -1,0 +1,40 @@
+name: ABC v2 real phone PIN and onboarding end-to-end
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/api/src/abc/**"
+      - "apps/api/tests/abc-v2-live.mjs"
+      - "apps/api/prisma/schema.prisma"
+      - ".github/workflows/abc-v2-live.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Wait for new account-registration route
+        run: |
+          for i in $(seq 1 45); do
+            status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 25 \
+              -X POST -H 'content-type: application/json' \
+              -d '{}' https://abbasiconnect-api.onrender.com/abc/signup || true)
+            if [ "$status" = "400" ]; then
+              echo "ABC V2 early-signup API is available"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "New registration service did not become live"
+          exit 1
+      - name: Test persistent login and bilingual AI interview
+        run: node apps/api/tests/abc-v2-live.mjs

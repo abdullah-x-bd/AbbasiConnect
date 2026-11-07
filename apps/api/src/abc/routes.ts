@@ -12,7 +12,8 @@ import { extract,interview,openRouterConfigured,transcribeAudio } from "./llm.js
 
 const PHONE=/^\+[1-9]\d{7,14}$/;
 const VERIFY_REGEX=/\bABC\s+VERIFY\s+(\d{6})\b/i;
-const PIN=/^\d{6}$/;
+const PIN=/^\d{4,6}$/;
+const NEW_PIN=/^\d{4}$/;
 const MAX_MESSAGES=110;
 type Draft=SessionData&{draftNonce:string;phone:string|null;visible:boolean;createdAt:Date;updatedAt:Date};
 function normalizePhone(input:string){
@@ -45,7 +46,8 @@ function requiredSummary(d:Draft){
   return {ready:r.length===0 && allFieldsResolved(d.fieldStates),remaining:r};
 }
 function setupComplete(p:Profile){
-  return Boolean(p.registration?.preferred_language&&p.registration?.looking_for&&p.registration?.profile_for);
+  return Boolean(p.registration?.preferred_language&&p.registration?.looking_for&&p.registration?.profile_for&&
+    (p.registration.profile_for!=="relative"||p.registration.registrant_relationship_to_candidate));
 }
 function shortMessage(text:string){return text.trim().slice(0,460);}
 function perKeyThrottle(){
@@ -63,6 +65,10 @@ export async function registerAbcRoutes(app:FastifyInstance){
   async function requireDraft(request:FastifyRequest):Promise<Draft|null>{
     try{
       await request.jwtVerify();
+      if(request.user.scope==="abc_member"){
+        const acc=await prisma.abcAccount.findUnique({where:{id:request.user.userId},include:{registration:true}});
+        return acc?readDraft(acc.registration):null;
+      }
       if(request.user.scope!=="abc_draft"||!request.user.abcNonce)return null;
       const item=await prisma.abcRegistration.findUnique({where:{id:request.user.userId}});
       if(!item||item.draftNonce!==request.user.abcNonce||item.phase==="COMPLETE")return null;
@@ -105,6 +111,40 @@ export async function registerAbcRoutes(app:FastifyInstance){
     model:process.env.ABC_OPENROUTER_MODEL||"google/gemini-3.1-flash-lite"
   }));
 
+  // Early account creation for the redesigned ABC flow.
+  // "Continue" on the phone screen is intentionally a demo step, not SMS verification.
+  // phoneVerified remains FALSE until a real receiving gateway confirms ownership.
+  app.post("/signup",async(request,reply)=>{
+    const body=z.object({phone:z.string().trim().max(30),pin:z.string().regex(NEW_PIN)}).safeParse(request.body);
+    if(!body.success)return reply.code(400).send({error:"Enter a phone number and exactly four PIN digits"});
+    let phone:string;try{phone=normalizePhone(body.data.phone);}catch(e){return validationError(reply,e);}
+    if(!throttle("abc-register:"+request.ip,12,60*60*1000))
+      return reply.code(429).send({error:"Too many signups from this connection. Try again later."});
+    if(await prisma.abcAccount.findUnique({where:{phone}}))
+      return reply.code(409).send({error:"This number is already registered. Please sign in."});
+    const profile=freshProfile();
+    profile.registration.preferred_language="roman";
+    profile.registration.preferred_script="roman";
+    const states=freshStates();
+    try{
+      const account=await prisma.$transaction(async tx=>{
+        const registration=await tx.abcRegistration.create({data:{
+          phone,phase:"COLLECTING",profile:profile as any,fieldStates:states as any,
+          messages:[] as any,declines:{} as any,currentQuestion:null
+        }});
+        return tx.abcAccount.create({data:{registrationId:registration.id,phone,
+          pinHash:await bcrypt.hash(body.data.pin,12),phoneVerified:false}});
+      });
+      const token=app.jwt.sign({userId:account.id,scope:"abc_member"},{expiresIn:"14d"});
+      return reply.code(201).send({token,member:{id:account.id,phone:account.phone,phoneVerified:false},
+        session:client(readDraft(await prisma.abcRegistration.findUniqueOrThrow({where:{id:account.registrationId}}))),
+        verificationMode:"DEMO_UNVERIFIED"});
+    }catch(e){
+      request.log.warn({reason:String(e).slice(0,140)},"ABC early account signup rejected");
+      return reply.code(409).send({error:"Account already exists for this number. Try signing in."});
+    }
+  });
+
   app.post("/start",async(request,reply)=>{
     if(!throttle("abc-start:"+request.ip,40,60*60*1000))return reply.code(429).send({error:"Too many new registrations. Please try later."});
     const profile=freshProfile(),states=freshStates();
@@ -142,7 +182,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
     if(field==="profile_for"&&value==="self")reg.candidate_consent_confirmed=true;
     const next=setupComplete(p)?nextQuestion(p,d.fieldStates):null;
     const msgs=[...d.messages];
-    if(next&&!d.currentQuestion)msgs.push(note("assistant",next.ask[getLanguage(p)],next.path));
+    if(next&&!d.currentQuestion)msgs.push(note("assistant",next.ask.en+"\n"+next.ask.roman,next.path));
     const changed=await store(d,{profile:p,messages:safeHistory(msgs),currentQuestion:next?.path??null});
     return {session:client(changed),setupComplete:setupComplete(p)};
   });
@@ -230,7 +270,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
       states[current]="needs_clarification";
     }else{states[current]="declined";}
     const next=phase==="COLLECTING"?nextQuestion(d.profile,states):null;
-    if(next&&!msg)msg=next.ask[getLanguage(d.profile)];
+    if(next&&!msg)msg=next.ask.en+"\n"+next.ask.roman;
     const saved=await store(d,{fieldStates:states,declines,phase,currentQuestion:next?.path??null,
       messages:safeHistory([...d.messages,note("user","Prefer not to say",current),note("assistant",msg,next?.path)])});
     return {session:client(saved)};
@@ -239,7 +279,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
     const d=await requireDraft(request);if(!d)return authError(reply);
     if(!["PAUSED","BLOCKED_REQUIRED"].includes(d.phase))return reply.code(409).send({error:"Interview is not paused"});
     const next=nextQuestion(d.profile,d.fieldStates);
-    const msg=next?.ask[getLanguage(d.profile)]||"Your profile is ready for review.";
+    const msg=next?next.ask.en+"\n"+next.ask.roman:"Your profile is ready.\nAapka profile tayyar hai.";
     const saved=await store(d,{phase:next?"COLLECTING":"REVIEW",currentQuestion:next?.path??null,
       declines:{...d.declines,[next?.path||""]:0},messages:safeHistory([...d.messages,note("assistant",msg,next?.path)])});
     return {session:client(saved)};
@@ -264,7 +304,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
     if(d.profile.registration.profile_for==="relative"&&!body.data.candidateConsent)return reply.code(400).send({error:"Please confirm you have the candidate's permission"});
     const profile=structuredClone(d.profile);
     profile.registration.candidate_consent_confirmed=body.data.candidateConsent||profile.registration.profile_for==="self";
-    const saved=await store(d,{profile,reviewConfirmed:true,phase:"VERIFY_PHONE"});
+    const saved=await store(d,{profile,reviewConfirmed:true,phase:request.user.scope==="abc_member"?"COMPLETE":"VERIFY_PHONE"});
     return {session:client(saved)};
   });
   app.post("/verification/start",async(request,reply)=>{
@@ -329,7 +369,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
     const hash=await bcrypt.hash(body.data.pin,12);
     try{
       const account=await prisma.$transaction(async tx=>{
-        const user=await tx.abcAccount.create({data:{registrationId:d.id,phone:d.phone!,pinHash:hash}});
+        const user=await tx.abcAccount.create({data:{registrationId:d.id,phone:d.phone!,pinHash:hash,phoneVerified:true}});
         await tx.abcRegistration.update({where:{id:d.id},data:{phase:"COMPLETE",draftNonce:randomUUID(),reviewConfirmed:true}});
         return user;
       });
@@ -342,7 +382,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
     if(!body.success)return reply.code(400).send({error:"Enter mobile number and six-digit PIN"});
     let phone:string;try{phone=normalizePhone(body.data.phone);}catch(e){return validationError(reply,e);}
     if(!throttle("abc-login:"+phone,25,15*60*1000))return reply.code(429).send({error:"Too many login attempts"});
-    const acc=await prisma.abcAccount.findUnique({where:{phone}});
+    const acc=await prisma.abcAccount.findUnique({where:{phone},include:{registration:true}});
     if(!acc)return reply.code(401).send({error:"Incorrect mobile number or PIN"});
     if(acc.lockedUntil&&acc.lockedUntil>new Date())return reply.code(429).send({error:"Account temporarily locked. Try again later."});
     const match=await bcrypt.compare(body.data.pin,acc.pinHash);
@@ -354,12 +394,12 @@ export async function registerAbcRoutes(app:FastifyInstance){
     }
     await prisma.abcAccount.update({where:{id:acc.id},data:{failedAttempts:0,lockedUntil:null}});
     const token=app.jwt.sign({userId:acc.id,scope:"abc_member"},{expiresIn:"14d"});
-    return {token,member:{id:acc.id,phone:acc.phone},phase:"COMPLETE"};
+    return {token,member:{id:acc.id,phone:acc.phone,phoneVerified:acc.phoneVerified},phase:acc.registration.phase};
   });
   app.get("/me",async(request,reply)=>{
     const acc=await requireAccount(request);
     if(!acc)return reply.code(401).send({error:"ABC login required"});
-    return {member:{id:acc.id,phone:acc.phone},profile:acc.registration.profile,
+    return {member:{id:acc.id,phone:acc.phone,phoneVerified:acc.phoneVerified},profile:acc.registration.profile,
       visible:acc.registration.visible,phase:acc.registration.phase};
   });
   app.post("/publish",async(request,reply)=>{
@@ -367,6 +407,8 @@ export async function registerAbcRoutes(app:FastifyInstance){
     const body=z.object({visible:z.boolean()}).safeParse(request.body);
     if(!body.success)return reply.code(400).send({error:"Choose visibility"});
     const reg=acc.registration;
+    if(body.data.visible&&reg.phase!=="COMPLETE")return reply.code(409).send({error:"Finish the interview first"});
+    if(body.data.visible&&(!acc.phoneVerified))return reply.code(403).send({error:"SMS verification must be enabled before making your profile public"});
     if(body.data.visible&&!((reg.profile as any)?.registration?.candidate_consent_confirmed))return reply.code(403).send({error:"Candidate consent is required before publishing"});
     await prisma.abcRegistration.update({where:{id:reg.id},data:{visible:body.data.visible}});
     return {visible:body.data.visible};
@@ -383,7 +425,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
       &&(!q.data.seeking||p?.registration?.looking_for===q.data.seeking);
     }).map(x=>{
       const p=x.profile as any,c=p.candidate;
-      return {profileId:x.id,name:c?.full_name,age:c?.age_years,
+      return {profileId:x.id,hasPhoto:Boolean(x.photoData),name:c?.full_name,age:c?.age_years,
         gender:c?.gender,city:c?.current_location?.city,height_cm:c?.height_cm,
         education:c?.education?.highest_qualification,occupation:c?.occupation?.profession_or_role,
         introduction:c?.personal_introduction,looking_for:p.registration?.looking_for};
@@ -421,6 +463,53 @@ export async function registerAbcRoutes(app:FastifyInstance){
     const updated=await prisma.abcInterest.update({where:{id},data:{status:body.data.action==="WITHDRAW"?"WITHDRAWN":body.data.action==="ACCEPT"?"ACCEPTED":"DECLINED"}});
     return {id:updated.id,status:updated.status};
   });
+
+  // A member can remove their own ABC registration and all dependent private data.
+  app.delete("/account",async(request,reply)=>{
+    const acc=await requireAccount(request);
+    if(!acc)return reply.code(401).send({error:"ABC sign-in required"});
+    await prisma.abcRegistration.delete({where:{id:acc.registrationId}});
+    return {deleted:true};
+  });
+
+  // Images are stored separately from JSON so the LLM is never sent photo bytes.
+  // The JSON retains only a small pointer and explicit upload status.
+  app.post("/photo",async(request,reply)=>{
+    const acc=await requireAccount(request);if(!acc)return reply.code(401).send({error:"Sign in to add a photo"});
+    const body=z.object({base64:z.string().min(100).max(1250000),mime:z.enum(["image/jpeg","image/png"])}).safeParse(request.body);
+    if(!body.success)return reply.code(400).send({error:"Choose a JPEG or PNG image smaller than 900 KB"});
+    const buffer=Buffer.from(body.data.base64,"base64");
+    const isJpeg=buffer.length>=4&&buffer[0]===255&&buffer[1]===216&&buffer[2]===255;
+    const isPng=buffer.length>=8&&buffer.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
+    if(buffer.length>930000||buffer.length<100||(body.data.mime==="image/jpeg"&&!isJpeg)||(body.data.mime==="image/png"&&!isPng))
+      return reply.code(400).send({error:"This image is unsupported or too large"});
+    const dataUri="data:"+body.data.mime+";base64,"+buffer.toString("base64");
+    const profile=structuredClone(acc.registration.profile as any);
+    profile.candidate.profile_photo={uploaded:true,mime:body.data.mime,updatedAt:new Date().toISOString()};
+    await prisma.abcRegistration.update({where:{id:acc.registrationId},data:{photoData:dataUri,profile:profile as any,version:{increment:1}}});
+    return {ok:true,photo:profile.candidate.profile_photo};
+  });
+  app.get("/photo",async(request,reply)=>{
+    const acc=await requireAccount(request);if(!acc)return reply.code(401).send({error:"Sign in first"});
+    const r=await prisma.abcRegistration.findUnique({where:{id:acc.registrationId},select:{photoData:true}});
+    return {dataUri:r?.photoData||null};
+  });
+  app.delete("/photo",async(request,reply)=>{
+    const acc=await requireAccount(request);if(!acc)return reply.code(401).send({error:"Sign in first"});
+    const profile=structuredClone(acc.registration.profile as any);
+    profile.candidate.profile_photo=null;
+    await prisma.abcRegistration.update({where:{id:acc.registrationId},data:{photoData:null,profile:profile as any,version:{increment:1}}});
+    return {ok:true};
+  });
+  app.get("/public-photo/:id",async(request,reply)=>{
+    const acc=await requireAccount(request);if(!acc)return reply.code(401).send({error:"Sign in first"});
+    const id=(request.params as any).id;
+    if(typeof id!=="string"||!/^[0-9a-f-]{36}$/i.test(id))return reply.code(400).send({error:"Invalid profile"});
+    const r=await prisma.abcRegistration.findUnique({where:{id},select:{visible:true,phase:true,photoData:true}});
+    if(!r||!r.visible||r.phase!=="COMPLETE")return reply.code(404).send({error:"Photo unavailable"});
+    return {dataUri:r.photoData||null};
+  });
+
   app.post("/audio/transcribe",async(request,reply)=>{
     const d=await requireDraft(request);if(!d)return authError(reply);
     if(d.phase!=="COLLECTING")return reply.code(409).send({error:"Speech input is available during the interview"});
