@@ -2,7 +2,7 @@ name: ABC Bahishti Android APK
 
 on:
   push:
-    branches: [main, "feature/abc-bahishti"]
+    branches: [main, "feature/abc-minimal-v2"]
     paths:
       - "apps/bahishti/**"
       - ".github/workflows/abc-android-apk.yml"
