@@ -119,7 +119,7 @@ export function normalizeField(path:string,raw:unknown): {ok:true;value:unknown;
     return {ok:true,value:v,complete:v.every(item=>item.can_speak!==null&&item.can_read!==null&&item.can_write!==null)};
   }
   if(def.kind==="list"){
-    if(typeof value==="string"){try{value=JSON.parse(value);}catch{value=value.split(",").map((x:string)=>x.trim());}}
+    if(typeof value==="string"){try{value=JSON.parse(value);}catch{value=(value as string).split(",").map((x:string)=>x.trim());}}
     if(!Array.isArray(value)||value.length>20||!value.every(x=>typeof x==="string"&&x.trim().length>0&&x.length<=120))return {ok:false,error:"Expected a list of short place names"};
     return {ok:true,value:value.map((x:string)=>x.trim()),complete:true};
   }
