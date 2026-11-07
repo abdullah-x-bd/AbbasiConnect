@@ -6,6 +6,7 @@ on:
     paths:
       - ".github/workflows/android-emulator.yml"
       - "apps/mobile/tests/emulator-ui.py"
+      - ".github/scripts/android-emulator-smoke.sh"
   workflow_dispatch:
 
 permissions:
