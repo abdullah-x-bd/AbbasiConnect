@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
-import { webcrypto } from "node:crypto";
+import { webcrypto, randomBytes } from "node:crypto";
 
 const API = "https://abbasiconnect-api.onrender.com";
 const qs = async (path, options = {}) => {
@@ -21,7 +21,7 @@ const qs = async (path, options = {}) => {
 const result = [];
 const pass = name => { result.push(name); console.log("PASS " + name); };
 const runId = String(process.env.GITHUB_RUN_ID || Date.now()).replace(/\D/g,"").slice(-11);
-const pw = "MobileQATest2026x";
+const pw = randomBytes(20).toString("hex");
 let a,b,postIds = [], commentIds = [];
 function profile(u, visible = true) {
   return {displayName:u.user.displayName,city:"Delhi",state:"Delhi",country:"India",gender:"Other",
