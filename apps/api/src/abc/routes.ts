@@ -118,6 +118,11 @@ export async function registerAbcRoutes(app:FastifyInstance){
     const d=await requireDraft(request);if(!d)return authError(reply);
     return {session:client(d),setupComplete:setupComplete(d.profile)};
   });
+  app.delete("/draft",async(request,reply)=>{
+    const d=await requireDraft(request);if(!d)return authError(reply);
+    await prisma.abcRegistration.delete({where:{id:d.id}});
+    return {ok:true};
+  });
   app.post("/choice",async(request,reply)=>{
     const d=await requireDraft(request);if(!d)return authError(reply);
     if(d.phase!=="COLLECTING")return reply.code(409).send({error:"The interview is not collecting answers"});
