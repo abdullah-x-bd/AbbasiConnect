@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from "react-native";
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View, type ScrollViewInstance } from "react-native";
 import { api } from "../api";
 import { decryptMessage, encryptMessage, getMyPublicKey, isUnlocked, prepareMessaging } from "../crypto";
 import { useRefresh } from "../refresh";
@@ -17,7 +17,7 @@ export default function Messages({ member }: { member: Member }) {
   const [results, setResults] = useState<Member[]>([]);
   const [opening, setOpening] = useState(false);
   const { busy, error, run } = useTask();
-  const chatRef = useRef<ScrollView>(null);
+  const chatRef = useRef<ScrollViewInstance | null>(null);
 
   const loadThreads = useCallback(async () => {
     const data = await api<{ threads: Thread[] }>("/messages-secure/threads");
