@@ -69,6 +69,20 @@ const niceNames:Record<string,string>={
   "family.mother.profession":"Mother's work","family.mother.education":"Mother's education",
   "family.siblings.brothers_count":"Brothers","family.siblings.sisters_count":"Sisters"
 };
+const niceRoman:Record<string,string>={
+  "candidate.full_name":"Naam","candidate.gender":"Jins","candidate.age_years":"Umr",
+  "candidate.height_cm":"Qad","candidate.marital_status":"Shaadi ki haalat",
+  "candidate.current_location.city":"Rehne ka shehar",
+  "candidate.ancestral_location.city_or_town":"Aabai shehar",
+  "candidate.education.highest_qualification":"Taleem",
+  "candidate.education.two_sentence_description":"Taleem ki tafseel",
+  "candidate.occupation.profession_or_role":"Kaam ya padhai",
+  "candidate.languages":"Zubanein","family.father.name":"Walid ka naam",
+  "family.father.profession":"Walid ka kaam","family.father.education":"Walid ki taleem",
+  "family.mother.name":"Walida ka naam","family.mother.profession":"Walida ka kaam",
+  "family.mother.education":"Walida ki taleem",
+  "family.siblings.brothers_count":"Bhai","family.siblings.sisters_count":"Behnein"
+};
 function readAt(obj:any,path:string):any{
   return path.split(".").reduce((val,key)=>val&&typeof val==="object"?val[key]:undefined,obj);
 }
@@ -386,7 +400,7 @@ function App(){
         <TextInput style={styles.composeInput} placeholder="Write here / Yahan likhein…"
           accessibilityLabel="Your answer" multiline placeholderTextColor={T.faint}
           value={text} onChangeText={setText}/>
-        <Circle text={text.trim()?"↑":"●"} kind="accent" size={50} disabled={busy}
+        <Circle text={text.trim()?"↑":"🎤"} kind="accent" size={50} disabled={busy}
           label={text.trim()?"Send answer":"Start voice recording"}
           onPress={()=>text.trim()?void sendAnswer(text):void startVoice()}/>
       </View>
@@ -418,7 +432,7 @@ function App(){
             {i>0?<Hr/>:null}
             <Pressable accessibilityRole="button" accessibilityLabel={"Edit "+niceNames[path]}
               onPress={()=>edit(path)} style={{flexDirection:"row",alignItems:"center",gap:9}}>
-              <View style={{flex:1}}><Text style={st.note}>{niceNames[path]}</Text>
+              <View style={{flex:1}}><Text style={st.note}>{niceNames[path]} / {niceRoman[path]}</Text>
                 <Text style={{fontSize:15,color:T.ink,marginTop:4,lineHeight:22}}>{formatValue(readAt(profile,path))}</Text>
               </View>
               <Text style={{fontSize:14,color:T.accent}}>Edit</Text>
@@ -517,7 +531,7 @@ function App(){
             "candidate.ancestral_location.city_or_town","family.siblings.brothers_count",
             "family.siblings.sisters_count"].map((x,i)=><View key={x}>
             {i>0?<Hr/>:null}
-            <Text style={st.note}>{niceNames[x]}</Text>
+            <Text style={st.note}>{niceNames[x]} / {niceRoman[x]}</Text>
             <Text style={[st.sub,{color:T.ink,marginTop:2}]}>{formatValue(readAt(profile,x))}</Text>
           </View>)}
         </View>
