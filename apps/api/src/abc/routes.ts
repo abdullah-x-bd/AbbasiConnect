@@ -372,7 +372,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
       &&(!q.data.seeking||p?.registration?.looking_for===q.data.seeking);
     }).map(x=>{
       const p=x.profile as any,c=p.candidate;
-      return {id:x.account?undefined:x.id,profileId:x.id,name:c?.full_name,age:c?.age_years,
+      return {profileId:x.id,name:c?.full_name,age:c?.age_years,
         gender:c?.gender,city:c?.current_location?.city,height_cm:c?.height_cm,
         education:c?.education?.highest_qualification,occupation:c?.occupation?.profession_or_role,
         introduction:c?.personal_introduction,looking_for:p.registration?.looking_for};
