@@ -13,12 +13,12 @@ import {api,clearTokens,restoreTokens,setMemberToken,
 import {T,st,H,Btn,Field,Circle,Back,Hr} from "./minimal-ui";
 
 type Screen="loading"|"welcome"|"signupPhone"|"verify"|"pinSignup"|"signin"|
-  "purpose"|"for"|"relation"|"chat"|"recording"|"done"|"review"|
+  "purpose"|"for"|"relation"|"chat"|"chatPhoto"|"recording"|"done"|"review"|
   "explore"|"interests"|"profile"|"paused";
 type Interest={id:string;name:string;status:string;note?:string};
 const PREVIEW=process.env.EXPO_PUBLIC_ABC_PREVIEW==="1";
 const SCREENS:Screen[]=["welcome","signupPhone","verify","pinSignup","signin",
-  "purpose","for","relation","chat","recording","done","review",
+  "purpose","for","relation","chat","chatPhoto","recording","done","review",
   "explore","interests","profile","paused"];
 const sampleProfile:any={
   schema_version:"1.0.0",
@@ -151,6 +151,7 @@ function App(){
   function previewNext(){
     const i=(previewIndex+1)%SCREENS.length;
     setPreviewIndex(i);
+    if(SCREENS[i]==="chatPhoto")setPhotoSaved(true);
     setError("");setScreen(SCREENS[i]);
   }
   function speech(answer:string){
@@ -609,7 +610,7 @@ function App(){
         <Btn en="Continue" roman="Aage badhein" disabled={!relationship.trim()}
           onPress={()=>void choose("registrant_relationship_to_candidate",relationship.trim())}/>
       </View></View>;
-    if(screen==="chat"||screen==="recording")return chatScreen();
+    if(screen==="chat"||screen==="chatPhoto"||screen==="recording")return chatScreen();
     if(screen==="paused")return <View style={st.page}>
       {header("Paused",()=>setScreen("welcome"),"Thoda ruk gaye")}
       <View style={[st.inner,{justifyContent:"center",paddingBottom:75}]}>
