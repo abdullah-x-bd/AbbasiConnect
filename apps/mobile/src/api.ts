@@ -1,12 +1,12 @@
 import * as SecureStore from "expo-secure-store";
 
-const ROOT = (process.env.EXPO_PUBLIC_API_URL || "").replace(/\/+$/, "");
+const ROOT = (process.env.EXPO_PUBLIC_API_URL || "https://abbasiconnect-api.onrender.com").replace(/\/+$/, "");
 const TOKEN_KEY = "abbasiconnect.native.session";
 let bearer: string | null = null;
 
 export function baseUrl() {
   if (!ROOT || !/^https:\/\//i.test(ROOT)) {
-    throw new Error("Set EXPO_PUBLIC_API_URL to your deployed HTTPS backend URL in apps/mobile/.env");
+    throw new Error("Set EXPO_PUBLIC_API_URL to a valid HTTPS backend URL");
   }
   return ROOT;
 }
