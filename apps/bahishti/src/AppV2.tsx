@@ -670,7 +670,7 @@ function App(){
     </View>:null}
     {busy&&screen!=="chat"&&screen!=="recording"?<View style={styles.busy}><ActivityIndicator color={T.accent}/></View>:null}
     {PREVIEW?<Pressable accessibilityRole="button" accessibilityLabel="Next preview screen"
-      onPress={previewNext} style={{position:"absolute",right:0,top:0,width:72,height:72,opacity:.01}}>
+      onPress={previewNext} style={{position:"absolute",right:0,top:98,width:72,height:72,opacity:.01}}>
       <View style={{flex:1}}/></Pressable>:null}
   </SafeAreaView></SafeAreaProvider>;
 }
