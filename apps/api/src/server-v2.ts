@@ -8,10 +8,12 @@ import { config } from "./config.js";
 import { prisma } from "./db.js";
 import { hashIdentityReference } from "./identity.js";
 import type { AuthTokenPayload } from "./types.js";
+import { registerAbcRoutes } from "./abc/routes.js";
 
 const app = Fastify({ logger: true });
 await app.register(cors, { origin: config.webOrigin });
 await app.register(jwt, { secret: config.jwtSecret });
+await app.register(registerAbcRoutes, { prefix: "/abc" });
 
 declare module "@fastify/jwt" {
   interface FastifyJWT {
@@ -93,7 +95,7 @@ function fullMe(user: any) {
 async function requireMember(request: FastifyRequest, reply: FastifyReply) {
   try {
     await request.jwtVerify();
-    if (!request.user?.userId || request.user.scope === "admin") return reply.code(401).send({ error: "Member sign-in required" });
+    if (!request.user?.userId || request.user.scope) return reply.code(401).send({ error: "Member sign-in required" });
     const user = await prisma.user.findUnique({ where: { id: request.user.userId }, select: { suspendedAt: true } });
     if (!user || user.suspendedAt) return reply.code(403).send({ error: "Account unavailable" });
   } catch {

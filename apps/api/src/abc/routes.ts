@@ -1,0 +1,427 @@
+import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import { randomInt, randomUUID, timingSafeEqual } from "node:crypto";
+import bcrypt from "bcryptjs";
+import { z } from "zod";
+import { prisma } from "../db.js";
+import {
+  FIELDS,FIELD_MAP,freshProfile,freshStates,getLanguage,getPath,setPath,normalizeField,nextQuestion,
+  missingRequired,allFieldsResolved,percentComplete,safeHistory,localized,
+  type ChatMessage,type FieldStates,type Phase,type Profile,type SessionData,type Lang
+} from "./fields.js";
+import { extract,interview,openRouterConfigured,transcribeAudio } from "./llm.js";
+
+const PHONE=/^\+[1-9]\d{7,14}$/;
+const VERIFY_REGEX=/\bABC\s+VERIFY\s+(\d{6})\b/i;
+const PIN=/^\d{6}$/;
+const MAX_MESSAGES=110;
+type Draft=SessionData&{draftNonce:string;phone:string|null;visible:boolean;createdAt:Date;updatedAt:Date};
+function normalizePhone(input:string){
+  const x=input.replace(/[\s()\-]/g,"");
+  if(!PHONE.test(x))throw new Error("Enter a full mobile number with country code, for example +91...");
+  return x;
+}
+function safeEq(a:string,b:string){
+  const ba=Buffer.from(a);const bb=Buffer.from(b);
+  return ba.length===bb.length&&timingSafeEqual(ba,bb);
+}
+function readDraft(x:any):Draft {
+  return {
+    id:x.id,phase:x.phase as Phase,profile:x.profile as Profile,
+    fieldStates:x.fieldStates as FieldStates,messages:(x.messages||[]) as ChatMessage[],
+    currentQuestion:x.currentQuestion,declines:(x.declines||{}) as Record<string,number>,
+    lastClass:null,reviewConfirmed:x.reviewConfirmed,version:x.version,draftNonce:x.draftNonce,
+    phone:x.phone,visible:x.visible,createdAt:x.createdAt,updatedAt:x.updatedAt
+  };
+}
+function client(d:Draft){
+  return {id:d.id,phase:d.phase,profile:d.profile,fieldStates:d.fieldStates,messages:d.messages,
+    currentQuestion:d.currentQuestion,progress:percentComplete(d.fieldStates),
+    missingRequired:missingRequired(d.fieldStates),reviewConfirmed:d.reviewConfirmed,
+    phone:d.phone,visible:d.visible,version:d.version};
+}
+function note(role:"user"|"assistant",text:string,field?:string):ChatMessage{return {role,text,at:new Date().toISOString(),field};}
+function requiredSummary(d:Draft){
+  const r=missingRequired(d.fieldStates);
+  return {ready:r.length===0 && allFieldsResolved(d.fieldStates),remaining:r};
+}
+function setupComplete(p:Profile){
+  return Boolean(p.registration?.preferred_language&&p.registration?.looking_for&&p.registration?.profile_for);
+}
+function shortMessage(text:string){return text.trim().slice(0,460);}
+function perKeyThrottle(){
+  const map=new Map<string,{count:number;until:number}>();
+  return (key:string,max:number,windowMs:number)=>{
+    const now=Date.now();const row=map.get(key);
+    if(!row||row.until<now){map.set(key,{count:1,until:now+windowMs});return true;}
+    if(row.count>=max)return false;
+    row.count++;return true;
+  };
+}
+const throttle=perKeyThrottle();
+
+export async function registerAbcRoutes(app:FastifyInstance){
+  async function requireDraft(request:FastifyRequest):Promise<Draft|null>{
+    try{
+      await request.jwtVerify();
+      if(request.user.scope!=="abc_draft"||!request.user.abcNonce)return null;
+      const item=await prisma.abcRegistration.findUnique({where:{id:request.user.userId}});
+      if(!item||item.draftNonce!==request.user.abcNonce||item.phase==="COMPLETE")return null;
+      return readDraft(item);
+    }catch{return null;}
+  }
+  async function requireAccount(request:FastifyRequest){
+    try{
+      await request.jwtVerify();
+      if(request.user.scope!=="abc_member")return null;
+      return await prisma.abcAccount.findUnique({where:{id:request.user.userId},include:{registration:true}});
+    }catch{return null;}
+  }
+  async function store(d:Draft,changes:Partial<Draft>) {
+    const updated=await prisma.abcRegistration.updateMany({
+      where:{id:d.id,version:d.version},
+      data:{
+        ...(changes.phase!==undefined?{phase:changes.phase}:{}),
+        ...(changes.profile!==undefined?{profile:changes.profile as any}:{}),
+        ...(changes.fieldStates!==undefined?{fieldStates:changes.fieldStates as any}:{}),
+        ...(changes.messages!==undefined?{messages:changes.messages as any}:{}),
+        ...(changes.declines!==undefined?{declines:changes.declines as any}:{}),
+        ...(changes.currentQuestion!==undefined?{currentQuestion:changes.currentQuestion}:{}),
+        ...(changes.reviewConfirmed!==undefined?{reviewConfirmed:changes.reviewConfirmed}:{}),
+        ...(changes.phone!==undefined?{phone:changes.phone}:{}),
+        ...(changes.visible!==undefined?{visible:changes.visible}:{}),
+        version:{increment:1}
+      }
+    });
+    if(updated.count!==1)throw new Error("Your profile changed on another device. Refresh and try again.");
+    return readDraft(await prisma.abcRegistration.findUniqueOrThrow({where:{id:d.id}}));
+  }
+  function authError(reply:FastifyReply){return reply.code(401).send({error:"ABC session expired. Please sign in or resume registration."});}
+  function validationError(reply:FastifyReply,error:unknown){
+    return reply.code(400).send({error:error instanceof Error?error.message:"Invalid request"});
+  }
+  app.get("/health",async()=>({
+    ok:true,service:"abbasi-bahishti-connections",aiConfigured:openRouterConfigured(),
+    smsConfigured:Boolean(process.env.ABC_SMS_NUMBER&&process.env.ABC_SMS_WEBHOOK_SECRET),
+    model:process.env.ABC_OPENROUTER_MODEL||"google/gemini-3.1-flash-lite"
+  }));
+
+  app.post("/start",async(request,reply)=>{
+    if(!throttle("abc-start:"+request.ip,40,60*60*1000))return reply.code(429).send({error:"Too many new registrations. Please try later."});
+    const profile=freshProfile(),states=freshStates();
+    const created=await prisma.abcRegistration.create({data:{
+      profile:profile as any,fieldStates:states as any,messages:[] as any,declines:{} as any,phase:"COLLECTING"
+    }});
+    const token=app.jwt.sign({userId:created.id,scope:"abc_draft",abcNonce:created.draftNonce},{expiresIn:"30d"});
+    return reply.code(201).send({token,session:client(readDraft(created))});
+  });
+  app.get("/state",async(request,reply)=>{
+    const d=await requireDraft(request);if(!d)return authError(reply);
+    return {session:client(d),setupComplete:setupComplete(d.profile)};
+  });
+  app.delete("/draft",async(request,reply)=>{
+    const d=await requireDraft(request);if(!d)return authError(reply);
+    await prisma.abcRegistration.delete({where:{id:d.id}});
+    return {ok:true};
+  });
+  app.post("/choice",async(request,reply)=>{
+    const d=await requireDraft(request);if(!d)return authError(reply);
+    if(d.phase!=="COLLECTING")return reply.code(409).send({error:"The interview is not collecting answers"});
+    const body=z.object({field:z.enum(["preferred_language","looking_for","profile_for","candidate_consent_confirmed","registrant_relationship_to_candidate"]),value:z.union([z.string().max(100),z.boolean()])}).safeParse(request.body);
+    if(!body.success)return reply.code(400).send({error:"Invalid selection"});
+    const {field,value}=body.data;const p=structuredClone(d.profile),reg=p.registration;
+    const allowed:Record<string,unknown[]>={
+      preferred_language:["en","hi","ur","roman"],looking_for:["bride","groom"],
+      profile_for:["self","relative"],candidate_consent_confirmed:[true,false]
+    };
+    if(field in allowed&&!allowed[field].includes(value))return reply.code(400).send({error:"Invalid selection"});
+    if(field==="registrant_relationship_to_candidate"&&(typeof value!=="string"||value.trim().length<2))return reply.code(400).send({error:"Describe your relationship"});
+    if(field==="profile_for"&&!reg.looking_for)return reply.code(409).send({error:"Choose bride or groom first"});
+    if(field==="candidate_consent_confirmed"&&reg.profile_for!=="relative")return reply.code(400).send({error:"Consent selection is for relative registrations"});
+    reg[field]=value;
+    if(field==="preferred_language")reg.preferred_script=value;
+    if(field==="profile_for"&&value==="self")reg.candidate_consent_confirmed=true;
+    const next=setupComplete(p)?nextQuestion(p,d.fieldStates):null;
+    const msgs=[...d.messages];
+    if(next&&!d.currentQuestion)msgs.push(note("assistant",next.ask[getLanguage(p)],next.path));
+    const changed=await store(d,{profile:p,messages:safeHistory(msgs),currentQuestion:next?.path??null});
+    return {session:client(changed),setupComplete:setupComplete(p)};
+  });
+  app.post("/reply",async(request,reply)=>{
+    const d=await requireDraft(request);if(!d)return authError(reply);
+    if(d.phase!=="COLLECTING"||!setupComplete(d.profile)||!d.currentQuestion)return reply.code(409).send({error:"Complete your initial choices first"});
+    const body=z.object({text:z.string().trim().min(1).max(1500),version:z.number().int().nonnegative()}).safeParse(request.body);
+    if(!body.success)return reply.code(400).send({error:"Enter an answer (up to 1500 characters)"});
+    if(body.data.version!==d.version)return reply.code(409).send({error:"This interview has changed. Refresh and retry."});
+    if(d.messages.length>=MAX_MESSAGES)return reply.code(429).send({error:"Interview limit reached. Please contact support."});
+    if(!throttle("abc-reply:"+d.id,14,60*1000))return reply.code(429).send({error:"Too many replies. Please wait a moment."});
+    const lang=getLanguage(d.profile),userText=body.data.text;
+    const context={profile:d.profile,fieldStates:d.fieldStates,currentQuestion:d.currentQuestion,recent:d.messages,language:lang};
+    let extracted;
+    try{extracted=await extract(context,userText);}
+    catch(e){request.log.warn({type:"abc_extraction",reason:String(e).slice(0,150)},"ABC AI unavailable");return reply.code(503).send({error:"ABC interview is temporarily unavailable. Your last answer was not lost; please retry."});}
+    let profile=d.profile;
+    const states={...d.fieldStates};
+    const declines={...d.declines};
+    let count=0,issue="";
+    for(const change of extracted.changes){
+      if(!FIELD_MAP.has(change.path)||change.confidence==="LOW")continue;
+      const evidence=change.evidence.trim();
+      if(!evidence||!userText.toLocaleLowerCase().includes(evidence.toLocaleLowerCase()))continue;
+      let value:unknown;try{value=JSON.parse(change.value_json);}catch{continue;}
+      const valid=normalizeField(change.path,value);
+      if(!valid.ok){if(change.path===d.currentQuestion)issue=valid.error;continue;}
+      profile=setPath(profile,change.path,valid.value);
+      states[change.path]=valid.complete?"answered":"needs_clarification";
+      if(valid.complete)declines[change.path]=0;
+      count++;
+    }
+    const target=d.currentQuestion;
+    if(target&&!count){
+      if(extracted.declined_fields.includes(target)||extracted.classification==="DECLINED"){
+        if(FIELD_MAP.get(target)?.required){
+          declines[target]=(declines[target]||0)+1;issue="This information is required to complete your ABC profile";
+          states[target]="needs_clarification";
+        }else{states[target]="declined";}
+      }else if(extracted.unknown_fields.includes(target)||extracted.classification==="UNKNOWN"){
+        if(FIELD_MAP.get(target)?.allowUnknown)states[target]="unknown";
+        else if(FIELD_MAP.get(target)?.required){states[target]="needs_clarification";issue="We need a clear answer for this required field";}
+        else states[target]="unknown";
+      }else if(extracted.classification==="PAUSE"||extracted.classification==="STOP"){
+        const p=await store(d,{phase:"PAUSED",messages:safeHistory([...d.messages,note("user",userText),note("assistant","Your progress is saved. You can resume when ready.")])});
+        return {session:client(p)};
+      }else issue=extracted.clarification||issue||(extracted.off_topic||extracted.classification==="OFF_TOPIC"?"Let's continue with your profile":"Please give a clear answer");
+    }
+    const blocked=Boolean(target&&(declines[target]||0)>=2&&FIELD_MAP.get(target)?.required&&states[target]!=="answered");
+    const complete=missingRequired(states).length===0&&allFieldsResolved(states);
+    const phase:Phase=blocked?"BLOCKED_REQUIRED":complete?"REVIEW":"COLLECTING";
+    const next=phase==="COLLECTING"?nextQuestion(profile,states):null;
+    const directive=blocked?"BLOCKED":complete?"READY":
+      target&&(declines[target]||0)===1&&extracted.classification==="DECLINED"?"REQUIRED_REFUSAL":
+      next?.path===target?"RETRY":"ASK";
+    const history=[...d.messages,note("user",userText,target)];
+    const talk=await interview({ctx:{profile,fieldStates:states,currentQuestion:next?.path||null,recent:history,language:lang},
+      next,directive,validationIssue:issue,latestUserMessage:userText});
+    history.push(note("assistant",shortMessage(talk.message),next?.path));
+    try{
+      const saved=await store(d,{phase,profile,fieldStates:states,declines,currentQuestion:next?.path??null,messages:safeHistory(history)});
+      return {session:client(saved),changesAccepted:count,classification:extracted.classification};
+    }catch(e){return reply.code(409).send({error:String(e).slice(0,200)});}
+  });
+  app.post("/skip",async(request,reply)=>{
+    const d=await requireDraft(request);if(!d)return authError(reply);
+    if(d.phase!=="COLLECTING"||!d.currentQuestion)return reply.code(409).send({error:"There is no active question"});
+    const body=z.object({version:z.number().int()}).safeParse(request.body);
+    if(!body.success||body.data.version!==d.version)return reply.code(409).send({error:"Refresh your interview before skipping"});
+    const current=d.currentQuestion,def=FIELD_MAP.get(current)!;
+    const states={...d.fieldStates},declines={...d.declines};
+    let phase:Phase="COLLECTING",msg="";
+    if(def.required){
+      declines[current]=(declines[current]||0)+1;
+      if(declines[current]>=2){
+        phase="BLOCKED_REQUIRED";
+        msg="This is essential for ABC registration, so we've saved your profile. You can resume when you're ready to answer.";
+      }else msg="This information is required to complete your profile. Please answer so we can continue.";
+      states[current]="needs_clarification";
+    }else{states[current]="declined";}
+    const next=phase==="COLLECTING"?nextQuestion(d.profile,states):null;
+    if(next&&!msg)msg=next.ask[getLanguage(d.profile)];
+    const saved=await store(d,{fieldStates:states,declines,phase,currentQuestion:next?.path??null,
+      messages:safeHistory([...d.messages,note("user","Prefer not to say",current),note("assistant",msg,next?.path)])});
+    return {session:client(saved)};
+  });
+  app.post("/resume",async(request,reply)=>{
+    const d=await requireDraft(request);if(!d)return authError(reply);
+    if(!["PAUSED","BLOCKED_REQUIRED"].includes(d.phase))return reply.code(409).send({error:"Interview is not paused"});
+    const next=nextQuestion(d.profile,d.fieldStates);
+    const msg=next?.ask[getLanguage(d.profile)]||"Your profile is ready for review.";
+    const saved=await store(d,{phase:next?"COLLECTING":"REVIEW",currentQuestion:next?.path??null,
+      declines:{...d.declines,[next?.path||""]:0},messages:safeHistory([...d.messages,note("assistant",msg,next?.path)])});
+    return {session:client(saved)};
+  });
+  app.post("/edit",async(request,reply)=>{
+    const d=await requireDraft(request);if(!d)return authError(reply);
+    if(!["COLLECTING","REVIEW","VERIFY_PHONE"].includes(d.phase))return reply.code(409).send({error:"Profile cannot be edited now"});
+    const body=z.object({path:z.string(),value:z.unknown()}).safeParse(request.body);
+    if(!body.success)return reply.code(400).send({error:"Invalid edit"});
+    const valid=normalizeField(body.data.path,body.data.value);
+    if(!valid.ok)return reply.code(400).send({error:valid.error});
+    const profile=setPath(d.profile,body.data.path,valid.value),states={...d.fieldStates,[body.data.path]:valid.complete?"answered":"needs_clarification" as any};
+    const next=nextQuestion(profile,states),phase:Phase=missingRequired(states).length===0&&allFieldsResolved(states)?"REVIEW":"COLLECTING";
+    const saved=await store(d,{profile,fieldStates:states,phase,currentQuestion:next?.path??null,reviewConfirmed:false});
+    return {session:client(saved)};
+  });
+  app.post("/review",async(request,reply)=>{
+    const d=await requireDraft(request);if(!d)return authError(reply);
+    if(d.phase!=="REVIEW"||!allFieldsResolved(d.fieldStates)||missingRequired(d.fieldStates).length)return reply.code(409).send({error:"Some required answers are still missing"});
+    const body=z.object({confirmed:z.literal(true),candidateConsent:z.boolean()}).safeParse(request.body);
+    if(!body.success)return reply.code(400).send({error:"Confirm the profile before continuing"});
+    if(d.profile.registration.profile_for==="relative"&&!body.data.candidateConsent)return reply.code(400).send({error:"Please confirm you have the candidate's permission"});
+    const profile=structuredClone(d.profile);
+    profile.registration.candidate_consent_confirmed=body.data.candidateConsent||profile.registration.profile_for==="self";
+    const saved=await store(d,{profile,reviewConfirmed:true,phase:"VERIFY_PHONE"});
+    return {session:client(saved)};
+  });
+  app.post("/verification/start",async(request,reply)=>{
+    const d=await requireDraft(request);if(!d)return authError(reply);
+    if(d.phase!=="VERIFY_PHONE"||!d.reviewConfirmed)return reply.code(409).send({error:"Confirm your profile first"});
+    if(!process.env.ABC_SMS_NUMBER||!process.env.ABC_SMS_WEBHOOK_SECRET)return reply.code(503).send({error:"ABC SMS verification is not configured yet. Your profile is safely saved."});
+    const body=z.object({phone:z.string().max(30)}).safeParse(request.body);
+    if(!body.success)return reply.code(400).send({error:"Enter a mobile number"});
+    let phone:string;try{phone=normalizePhone(body.data.phone);}catch(e){return validationError(reply,e);}
+    if(!throttle("abc-sms:"+d.id,3,30*60*1000))return reply.code(429).send({error:"Too many verification requests. Please try later."});
+    const existing=await prisma.abcAccount.findUnique({where:{phone}});
+    if(existing)return reply.code(409).send({error:"This mobile number is already registered"});
+    const code=String(randomInt(100000,1000000));
+    await prisma.abcSmsChallenge.create({data:{registrationId:d.id,phone,codeHash:await bcrypt.hash(code,10),
+      expiresAt:new Date(Date.now()+10*60*1000)}});
+    const updated=await store(d,{phone});
+    return {session:client(updated),number:process.env.ABC_SMS_NUMBER,message:"ABC VERIFY "+code,expiresInSeconds:600};
+  });
+  // The gateway must be explicitly configured with an authenticated HTTPS webhook.
+  // Inbound SMS is never accepted from unauthenticated callers.
+  app.post("/sms/inbound",async(request,reply)=>{
+    const secret=process.env.ABC_SMS_WEBHOOK_SECRET;
+    if(!secret||secret.length<24)return reply.code(503).send({error:"Gateway not configured"});
+    const supplied=String(request.headers.authorization||"").replace(/^Bearer\s+/i,"");
+    if(!safeEq(supplied,secret))return reply.code(401).send({error:"Unauthorized gateway"});
+    const body=z.object({
+      from:z.string().max(30).optional(),phoneNumber:z.string().max(30).optional(),sender:z.string().max(30).optional(),
+      message:z.string().max(250).optional(),text:z.string().max(250).optional()
+    }).safeParse(request.body);
+    if(!body.success)return reply.code(400).send({error:"Invalid SMS payload"});
+    let sender:string;try{sender=normalizePhone(body.data.from||body.data.phoneNumber||body.data.sender||"");}catch{return reply.code(400).send({error:"Invalid sender number"});}
+    if(!throttle("abc-inbound:"+sender,15,15*60*1000))return reply.code(429).send({error:"Rate limit"});
+    const content=body.data.message||body.data.text||"";
+    const match=content.match(VERIFY_REGEX);
+    if(!match)return {ok:true,matched:false};
+    const challenges=await prisma.abcSmsChallenge.findMany({where:{
+      phone:sender,purpose:"REGISTER",verifiedAt:null,usedAt:null,expiresAt:{gt:new Date()},attempts:{lt:5}
+    },orderBy:{createdAt:"desc"},take:5,include:{registration:true}});
+    for(const challenge of challenges){
+      if(challenge.registration.phase!=="VERIFY_PHONE")continue;
+      await prisma.abcSmsChallenge.update({where:{id:challenge.id},data:{attempts:{increment:1}}});
+      if(!await bcrypt.compare(match[1],challenge.codeHash))continue;
+      await prisma.$transaction(async tx=>{
+        await tx.abcSmsChallenge.update({where:{id:challenge.id},data:{verifiedAt:new Date(),usedAt:new Date()}});
+        await tx.abcRegistration.update({where:{id:challenge.registrationId},data:{phase:"SET_PIN",phone:sender}});
+      });
+      return {ok:true,matched:true};
+    }
+    return {ok:true,matched:false};
+  });
+  app.get("/verification/status",async(request,reply)=>{
+    const d=await requireDraft(request);if(!d)return authError(reply);
+    return {phase:d.phase,verified:d.phase==="SET_PIN",phone:d.phone};
+  });
+  app.post("/pin/create",async(request,reply)=>{
+    const d=await requireDraft(request);if(!d)return authError(reply);
+    if(d.phase!=="SET_PIN"||!d.phone)return reply.code(409).send({error:"Verify your mobile number first"});
+    const body=z.object({pin:z.string().regex(PIN)}).safeParse(request.body);
+    if(!body.success)return reply.code(400).send({error:"Enter a six-digit PIN"});
+    const checked=await prisma.abcSmsChallenge.findFirst({where:{registrationId:d.id,phone:d.phone,verifiedAt:{not:null}},orderBy:{createdAt:"desc"}});
+    if(!checked)return reply.code(403).send({error:"Mobile verification missing"});
+    const hash=await bcrypt.hash(body.data.pin,12);
+    try{
+      const account=await prisma.$transaction(async tx=>{
+        const user=await tx.abcAccount.create({data:{registrationId:d.id,phone:d.phone!,pinHash:hash}});
+        await tx.abcRegistration.update({where:{id:d.id},data:{phase:"COMPLETE",draftNonce:randomUUID(),reviewConfirmed:true}});
+        return user;
+      });
+      const token=app.jwt.sign({userId:account.id,scope:"abc_member"},{expiresIn:"14d"});
+      return reply.code(201).send({token,member:{id:account.id,phone:account.phone},phase:"COMPLETE"});
+    }catch{return reply.code(409).send({error:"This phone number or registration is already in use"});}
+  });
+  app.post("/login",async(request,reply)=>{
+    const body=z.object({phone:z.string().max(30),pin:z.string().regex(PIN)}).safeParse(request.body);
+    if(!body.success)return reply.code(400).send({error:"Enter mobile number and six-digit PIN"});
+    let phone:string;try{phone=normalizePhone(body.data.phone);}catch(e){return validationError(reply,e);}
+    if(!throttle("abc-login:"+phone,25,15*60*1000))return reply.code(429).send({error:"Too many login attempts"});
+    const acc=await prisma.abcAccount.findUnique({where:{phone}});
+    if(!acc)return reply.code(401).send({error:"Incorrect mobile number or PIN"});
+    if(acc.lockedUntil&&acc.lockedUntil>new Date())return reply.code(429).send({error:"Account temporarily locked. Try again later."});
+    const match=await bcrypt.compare(body.data.pin,acc.pinHash);
+    if(!match){
+      const count=acc.failedAttempts+1;
+      await prisma.abcAccount.update({where:{id:acc.id},data:{failedAttempts:count,
+        lockedUntil:count>=5?new Date(Date.now()+30*60*1000):null}});
+      return reply.code(401).send({error:"Incorrect mobile number or PIN"});
+    }
+    await prisma.abcAccount.update({where:{id:acc.id},data:{failedAttempts:0,lockedUntil:null}});
+    const token=app.jwt.sign({userId:acc.id,scope:"abc_member"},{expiresIn:"14d"});
+    return {token,member:{id:acc.id,phone:acc.phone},phase:"COMPLETE"};
+  });
+  app.get("/me",async(request,reply)=>{
+    const acc=await requireAccount(request);
+    if(!acc)return reply.code(401).send({error:"ABC login required"});
+    return {member:{id:acc.id,phone:acc.phone},profile:acc.registration.profile,
+      visible:acc.registration.visible,phase:acc.registration.phase};
+  });
+  app.post("/publish",async(request,reply)=>{
+    const acc=await requireAccount(request);if(!acc)return reply.code(401).send({error:"ABC login required"});
+    const body=z.object({visible:z.boolean()}).safeParse(request.body);
+    if(!body.success)return reply.code(400).send({error:"Choose visibility"});
+    const reg=acc.registration;
+    if(body.data.visible&&!((reg.profile as any)?.registration?.candidate_consent_confirmed))return reply.code(403).send({error:"Candidate consent is required before publishing"});
+    await prisma.abcRegistration.update({where:{id:reg.id},data:{visible:body.data.visible}});
+    return {visible:body.data.visible};
+  });
+  app.get("/discover",async(request,reply)=>{
+    const acc=await requireAccount(request);if(!acc)return reply.code(401).send({error:"ABC login required"});
+    const q=z.object({city:z.string().max(60).optional(),seeking:z.enum(["bride","groom"]).optional()}).safeParse(request.query);
+    if(!q.success)return reply.code(400).send({error:"Invalid filter"});
+    const records=await prisma.abcRegistration.findMany({where:{phase:"COMPLETE",visible:true,
+      account:{isNot:{id:acc.id}}},orderBy:{updatedAt:"desc"},take:70});
+    const candidates=records.filter(x=>{
+      const p=x.profile as any;
+      return (!q.data.city||String(p?.candidate?.current_location?.city||"").toLowerCase().includes(q.data.city.toLowerCase()))
+      &&(!q.data.seeking||p?.registration?.looking_for===q.data.seeking);
+    }).map(x=>{
+      const p=x.profile as any,c=p.candidate;
+      return {profileId:x.id,name:c?.full_name,age:c?.age_years,
+        gender:c?.gender,city:c?.current_location?.city,height_cm:c?.height_cm,
+        education:c?.education?.highest_qualification,occupation:c?.occupation?.profession_or_role,
+        introduction:c?.personal_introduction,looking_for:p.registration?.looking_for};
+    });
+    return {candidates};
+  });
+  app.post("/interests/:registrationId",async(request,reply)=>{
+    const acc=await requireAccount(request);if(!acc)return reply.code(401).send({error:"ABC login required"});
+    const id=(request.params as any)?.registrationId;
+    if(typeof id!=="string"||!/^[0-9a-f-]{36}$/i.test(id))return reply.code(400).send({error:"Invalid candidate"});
+    const target=await prisma.abcAccount.findUnique({where:{registrationId:id},include:{registration:true}});
+    if(!target||!target.registration.visible||target.id===acc.id)return reply.code(404).send({error:"Candidate unavailable"});
+    const body=z.object({note:z.string().max(400).default("")}).safeParse(request.body??{});
+    if(!body.success)return reply.code(400).send({error:"Interest note too long"});
+    const interest=await prisma.abcInterest.upsert({where:{fromId_toId:{fromId:acc.id,toId:target.id}},
+      create:{fromId:acc.id,toId:target.id,note:body.data.note},update:{note:body.data.note,status:"PENDING"}});
+    return {interest:{id:interest.id,status:interest.status}};
+  });
+  app.get("/interests",async(request,reply)=>{
+    const acc=await requireAccount(request);if(!acc)return reply.code(401).send({error:"ABC login required"});
+    const records=await prisma.abcInterest.findMany({where:{OR:[{fromId:acc.id},{toId:acc.id}]},
+      include:{from:{include:{registration:true}},to:{include:{registration:true}}},orderBy:{updatedAt:"desc"},take:60});
+    return {sent:records.filter(r=>r.fromId===acc.id).map(r=>({id:r.id,status:r.status,note:r.note,name:(r.to.registration.profile as any)?.candidate?.full_name})),
+      received:records.filter(r=>r.toId===acc.id).map(r=>({id:r.id,status:r.status,note:r.note,name:(r.from.registration.profile as any)?.candidate?.full_name}))};
+  });
+  app.patch("/interests/:id",async(request,reply)=>{
+    const acc=await requireAccount(request);if(!acc)return reply.code(401).send({error:"ABC login required"});
+    const body=z.object({action:z.enum(["ACCEPT","DECLINE","WITHDRAW"])}).safeParse(request.body);
+    if(!body.success)return reply.code(400).send({error:"Invalid decision"});
+    const id=(request.params as any).id;
+    const interest=await prisma.abcInterest.findUnique({where:{id}});
+    if(!interest)return reply.code(404).send({error:"Interest unavailable"});
+    if(body.data.action==="WITHDRAW"&&interest.fromId!==acc.id)return reply.code(403).send({error:"Not your request"});
+    if(body.data.action!=="WITHDRAW"&&interest.toId!==acc.id)return reply.code(403).send({error:"Not your incoming interest"});
+    const updated=await prisma.abcInterest.update({where:{id},data:{status:body.data.action==="WITHDRAW"?"WITHDRAWN":body.data.action==="ACCEPT"?"ACCEPTED":"DECLINED"}});
+    return {id:updated.id,status:updated.status};
+  });
+  app.post("/audio/transcribe",async(request,reply)=>{
+    const d=await requireDraft(request);if(!d)return authError(reply);
+    if(d.phase!=="COLLECTING")return reply.code(409).send({error:"Speech input is available during the interview"});
+    const body=z.object({data:z.string().max(1200000),format:z.enum(["m4a","wav","mp3"])}).safeParse(request.body);
+    if(!body.success)return reply.code(400).send({error:"Invalid audio clip"});
+    if(!throttle("abc-audio:"+d.id,12,60*60*1000))return reply.code(429).send({error:"Audio limit reached"});
+    try{return {text:await transcribeAudio(body.data.data,body.data.format)};}
+    catch{return reply.code(503).send({error:"Speech transcription temporarily unavailable. Please type your answer."});}
+  });
+}

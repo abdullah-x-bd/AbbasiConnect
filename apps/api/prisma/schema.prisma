@@ -359,3 +359,68 @@ model Report {
   @@index([reportedUserId])
   @@index([postId])
 }
+
+
+// ABC is isolated from the legacy AbbasiConnect member, Rishte and message tables.
+model AbcRegistration {
+  id             String    @id @default(uuid())
+  draftNonce     String    @default(uuid())
+  phase          String    @default("COLLECTING") @db.VarChar(32)
+  profile        Json
+  fieldStates    Json
+  messages       Json
+  declines       Json
+  currentQuestion String?  @db.VarChar(150)
+  reviewConfirmed Boolean @default(false)
+  version        Int      @default(0)
+  phone          String?  @db.VarChar(20)
+  visible        Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  account        AbcAccount?
+  challenges     AbcSmsChallenge[]
+
+  @@index([phase, updatedAt])
+}
+model AbcAccount {
+  id            String   @id @default(uuid())
+  registrationId String @unique
+  phone         String   @unique @db.VarChar(20)
+  pinHash       String
+  failedAttempts Int     @default(0)
+  lockedUntil   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  registration  AbcRegistration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  sentInterests AbcInterest[] @relation("abcFrom")
+  receivedInterests AbcInterest[] @relation("abcTo")
+}
+model AbcSmsChallenge {
+  id            String   @id @default(uuid())
+  registrationId String
+  phone         String   @db.VarChar(20)
+  codeHash      String
+  purpose       String   @default("REGISTER") @db.VarChar(20)
+  attempts      Int      @default(0)
+  expiresAt     DateTime
+  verifiedAt    DateTime?
+  usedAt        DateTime?
+  createdAt     DateTime @default(now())
+  registration  AbcRegistration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  @@index([phone, expiresAt])
+  @@index([registrationId, createdAt])
+}
+model AbcInterest {
+  id            String @id @default(uuid())
+  fromId        String
+  toId          String
+  note          String @default("") @db.VarChar(400)
+  status        String @default("PENDING") @db.VarChar(24)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  from          AbcAccount @relation("abcFrom",fields:[fromId],references:[id],onDelete:Cascade)
+  to            AbcAccount @relation("abcTo",fields:[toId],references:[id],onDelete:Cascade)
+  @@unique([fromId,toId])
+  @@index([toId,status,createdAt])
+}

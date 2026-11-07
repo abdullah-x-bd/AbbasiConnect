@@ -13,6 +13,7 @@
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "tsx src/seed.ts",
+    "db:secure": "tsx src/abc/harden.ts",
     "db:studio": "prisma studio"
   },
   "dependencies": {
