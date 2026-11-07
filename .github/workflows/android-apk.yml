@@ -1,0 +1,64 @@
+name: Build installable Android APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/mobile/**"
+      - ".github/workflows/android-apk.yml"
+      - "package.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 85
+    env:
+      CI: "1"
+      EXPO_NO_TELEMETRY: "1"
+      EXPO_PUBLIC_API_URL: "https://abbasiconnect-api.onrender.com"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+      - name: Install workspace packages
+        run: npm install --no-audit --no-fund
+      - name: Confirm API URL and typecheck
+        run: |
+          test "$EXPO_PUBLIC_API_URL" = "https://abbasiconnect-api.onrender.com"
+          npm run typecheck -w @abbasiconnect/mobile
+          node apps/mobile/tests/contracts.test.mjs
+      - name: Generate Android native project
+        working-directory: apps/mobile
+        run: npx expo prebuild --platform android --no-install --non-interactive
+      - name: Build standalone release APK
+        working-directory: apps/mobile/android
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --max-workers=2 --stacktrace
+      - name: Confirm APK exists
+        run: test -s apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AbbasiConnect-Android-APK
+          path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
