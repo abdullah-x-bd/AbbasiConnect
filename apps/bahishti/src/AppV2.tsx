@@ -412,7 +412,7 @@ function App(){
       {header("Your answers",()=>setScreen("done"),"Aapke jawaab")}
       <ScrollView contentContainerStyle={st.inner} keyboardShouldPersistTaps="handled">
         {categories.map(cat=><View key={cat.id} style={{marginBottom:20}}>
-          <Text style={{fontSize:19,fontWeight:"750",color:T.ink}}>{cat.label}</Text>
+          <Text style={{fontSize:19,fontWeight:"700",color:T.ink}}>{cat.label}</Text>
           <Text style={[st.note,{marginBottom:10}]}>{cat.roman}</Text>
           <View style={st.card}>{cat.paths.map((path,i)=><View key={path}>
             {i>0?<Hr/>:null}
@@ -446,7 +446,7 @@ function App(){
           <TextInput style={{flex:1,fontSize:16,color:T.ink}} placeholder="City / Shehar" accessibilityLabel="Search city"
             placeholderTextColor={T.faint} value={city} onChangeText={setCity} onSubmitEditing={()=>void search()}/>
           <Pressable accessibilityRole="button" accessibilityLabel="Search profiles" onPress={()=>void search()}>
-            <Text style={{fontSize:15,fontWeight:"750",color:T.accent}}>Go</Text>
+            <Text style={{fontSize:15,fontWeight:"700",color:T.accent}}>Go</Text>
           </Pressable>
         </View>
         {!candidates.length?<View style={{alignItems:"center",paddingTop:80,paddingHorizontal:10}}>
@@ -458,8 +458,8 @@ function App(){
           <Text style={[st.note,{textAlign:"center",marginTop:12}]}>Profiles appear when members choose to share them.</Text>
         </View>:candidates.map(c=><View key={c.profileId} style={[st.card,{marginBottom:13}]}>
           <View style={{flexDirection:"row",gap:12,alignItems:"center"}}>
-            <View style={styles.avatar}><Text style={{fontSize:23,color:T.accent,fontWeight:"750"}}>{String(c.name||"?").slice(0,1)}</Text></View>
-            <View style={{flex:1}}><Text style={{fontSize:19,fontWeight:"750",color:T.ink}}>{c.name}</Text>
+            <View style={styles.avatar}><Text style={{fontSize:23,color:T.accent,fontWeight:"700"}}>{String(c.name||"?").slice(0,1)}</Text></View>
+            <View style={{flex:1}}><Text style={{fontSize:19,fontWeight:"700",color:T.ink}}>{c.name}</Text>
               <Text style={st.note}>{[c.age?c.age+" years":null,c.city,c.education].filter(Boolean).join(" · ")}</Text></View>
           </View>
           {c.occupation?<Text style={[st.sub,{marginTop:10}]}>{c.occupation}</Text>:null}
@@ -472,7 +472,7 @@ function App(){
   }
   function interestsScreen(){
     return <View style={st.page}>
-      <View style={styles.exploreHeader}><Text style={{fontSize:26,fontWeight:"750",color:T.ink}}>Interests</Text>
+      <View style={styles.exploreHeader}><Text style={{fontSize:26,fontWeight:"700",color:T.ink}}>Interests</Text>
         <Text style={st.roman}>Dilchaspi</Text></View>
       <ScrollView contentContainerStyle={st.inner}>
         <Text style={styles.groupTitle}>Received / Jo aaye</Text>
@@ -494,7 +494,7 @@ function App(){
   }
   function profileScreen(){
     return <View style={st.page}>
-      <View style={styles.exploreHeader}><Text style={{fontSize:26,fontWeight:"750",color:T.ink}}>My profile</Text>
+      <View style={styles.exploreHeader}><Text style={{fontSize:26,fontWeight:"700",color:T.ink}}>My profile</Text>
         <Text style={st.roman}>Meri profile</Text></View>
       <ScrollView contentContainerStyle={st.inner}>
         <View style={{alignItems:"center",marginBottom:27}}>
@@ -502,7 +502,7 @@ function App(){
             <View style={[styles.avatar,{width:96,height:96,borderRadius:48}]}>
               <Text style={{fontSize:34,color:T.accent}}>{String(profile.candidate?.full_name||"A").slice(0,1)}</Text>
             </View>}
-          <Text style={{fontSize:24,color:T.ink,fontWeight:"750",marginTop:14}}>{profile.candidate?.full_name||"Your name"}</Text>
+          <Text style={{fontSize:24,color:T.ink,fontWeight:"700",marginTop:14}}>{profile.candidate?.full_name||"Your name"}</Text>
           <Text style={st.sub}>{[profile.candidate?.age_years?profile.candidate.age_years+" years":null,
             profile.candidate?.current_location?.city].filter(Boolean).join(" · ")}</Text>
           <View style={{height:16}}/>
@@ -663,7 +663,7 @@ function App(){
 const styles=StyleSheet.create({
   header:{height:66,backgroundColor:T.paper,paddingHorizontal:20,flexDirection:"row",alignItems:"center",
     borderBottomColor:T.line,borderBottomWidth:1,gap:7},
-  headerText:{fontSize:18,color:T.ink,fontWeight:"750"},
+  headerText:{fontSize:18,color:T.ink,fontWeight:"700"},
   headerSmall:{fontSize:12,color:T.muted,marginTop:1},
   headerABC:{fontSize:19,fontWeight:"800",color:T.accent,letterSpacing:-.4},
   composer:{flexDirection:"row",paddingHorizontal:12,paddingVertical:10,backgroundColor:T.white,
@@ -679,8 +679,8 @@ const styles=StyleSheet.create({
   avatar:{width:55,height:55,borderRadius:28,backgroundColor:T.light,alignItems:"center",justifyContent:"center"},
   empty:{marginVertical:10,paddingVertical:18,paddingHorizontal:18,borderWidth:1,borderColor:T.border,
     borderRadius:18,backgroundColor:T.white},
-  groupTitle:{fontSize:19,fontWeight:"750",color:T.ink,marginBottom:7},
-  phoneText:{fontSize:24,fontWeight:"750",color:T.ink},
+  groupTitle:{fontSize:19,fontWeight:"700",color:T.ink,marginBottom:7},
+  phoneText:{fontSize:24,fontWeight:"700",color:T.ink},
   error:{marginHorizontal:10,marginBottom:8,padding:12,borderRadius:11,backgroundColor:"#FFF1F1",flexDirection:"row",gap:8},
   busy:{position:"absolute",right:20,bottom:85,backgroundColor:T.white,padding:10,borderRadius:30}
 });
