@@ -1,0 +1,38 @@
+name: Publish direct ABC Android APK download
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/abc-publish-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: abc-bahishti-v1.0.0
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve verified ABC Android APK artifact
+        run: |
+          mkdir -p artifact
+          gh run download 42394639466 --repo "$GITHUB_REPOSITORY" --name ABC-Bahishti-Android-APK --dir artifact
+          test -s artifact/app-release.apk
+          cp artifact/app-release.apk ABC-Bahishti-Connections.apk
+          file ABC-Bahishti-Connections.apk
+          ls -lh ABC-Bahishti-Connections.apk
+      - name: Publish APK directly on GitHub Releases
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" ABC-Bahishti-Connections.apk --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" ABC-Bahishti-Connections.apk --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "ABC Bahishti Connections Android v1.0.0" --notes "Standalone Android APK for Abbasi Bahishti Connections. Download and tap the APK to install. Reverse SMS activation requires the dedicated receiving gateway." --latest=false
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets
