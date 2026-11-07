@@ -8,10 +8,12 @@ import { config } from "./config.js";
 import { prisma } from "./db.js";
 import { hashIdentityReference } from "./identity.js";
 import type { AuthTokenPayload } from "./types.js";
+import { registerAbcRoutes } from "./abc/routes.js";
 
 const app = Fastify({ logger: true });
 await app.register(cors, { origin: config.webOrigin });
 await app.register(jwt, { secret: config.jwtSecret });
+await app.register(registerAbcRoutes, { prefix: "/abc" });
 
 declare module "@fastify/jwt" {
   interface FastifyJWT {
