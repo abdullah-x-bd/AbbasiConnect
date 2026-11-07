@@ -126,6 +126,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
     profile.registration.preferred_language="roman";
     profile.registration.preferred_script="roman";
     const states=freshStates();
+    const pinHash=await bcrypt.hash(body.data.pin,12);
     try{
       const account=await prisma.$transaction(async tx=>{
         const registration=await tx.abcRegistration.create({data:{
@@ -133,8 +134,8 @@ export async function registerAbcRoutes(app:FastifyInstance){
           messages:[] as any,declines:{} as any,currentQuestion:null
         }});
         return tx.abcAccount.create({data:{registrationId:registration.id,phone,
-          pinHash:await bcrypt.hash(body.data.pin,12),phoneVerified:false}});
-      });
+          pinHash,phoneVerified:false}});
+      },{maxWait:12000,timeout:30000});
       const token=app.jwt.sign({userId:account.id,scope:"abc_member"},{expiresIn:"14d"});
       return reply.code(201).send({token,member:{id:account.id,phone:account.phone,phoneVerified:false},
         session:client(readDraft(await prisma.abcRegistration.findUniqueOrThrow({where:{id:account.registrationId}}))),
