@@ -1,0 +1,52 @@
+name: Android signed-in end-to-end device tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/mobile/tests/emulator-signedin.py"
+      - ".github/workflows/android-authenticated.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  native-member-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    env:
+      GH_TOKEN: ${{ github.token }}
+      QA_USERNAME: qa_a_42381582126
+      QA_PASSWORD: MobileQATest2026x
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve compiled release APK
+        run: |
+          mkdir -p emulator-apk
+          gh run download 42375143949 --repo "$GITHUB_REPOSITORY" --name AbbasiConnect-Android-APK --dir emulator-apk
+          test -s emulator-apk/app-release.apk
+      - name: Enable hardware acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Test authenticated member in Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: python3 apps/mobile/tests/emulator-signedin.py
+      - name: Save device screenshots and UI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AbbasiConnect-Android-Authenticated-E2E
+          path: emulator-results/
+          retention-days: 14
+          if-no-files-found: warn
