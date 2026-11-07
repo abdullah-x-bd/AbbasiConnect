@@ -41,6 +41,21 @@ def dump():
 def bounds(node):
     v=[int(x) for x in re.findall(r"\d+",node.attrib.get("bounds",""))]
     return (v[0]+v[2])//2,(v[1]+v[3])//2
+EXPECTED=[
+ "Naya account banayein","Your mobile number","Continue with this number",
+ "Choose a 4-digit PIN","Welcome back","Looking for a","Whose profile is this",
+ "How are you related","Conversation","Photo saved","Listening",
+ "We have all the details","Your answers","Explore / Rishte",
+ "Interests","My profile","Your answers are saved"
+]
+def verify_screen(i):
+    expected=EXPECTED[i]
+    for attempt in range(7):
+        contents=" ".join(n.attrib.get("text","")+" "+n.attrib.get("content-desc","") for n in dump())
+        if expected.lower() in contents.lower():return
+        time.sleep(1.3)
+    raise AssertionError("Screenshot is not on expected page "+str(i+1)+": "+expected)
+
 def next_screen():
     nodes=dump()
     hits=[n for n in nodes if "Next preview screen" in n.attrib.get("content-desc","")]
@@ -57,6 +72,7 @@ time.sleep(10)
 metadata=[]
 for i,(name,description) in enumerate(SCREENS):
     if i:next_screen()
+    verify_screen(i)
     file=OUT/(name+".png")
     with file.open("wb") as f:
         subprocess.run(["adb","exec-out","screencap","-p"],stdout=f,timeout=45,check=True)
