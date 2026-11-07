@@ -1,0 +1,48 @@
+name: ABC Android emulator smoke test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/bahishti/tests/emulator-onboarding.py"
+      - ".github/workflows/abc-emulator.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch ABC release APK
+        run: |
+          mkdir -p abc-apk
+          gh run download 42393331883 --repo "$GITHUB_REPOSITORY" --name ABC-Bahishti-Android-APK --dir abc-apk
+          test -s abc-apk/app-release.apk
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: adb install -r abc-apk/app-release.apk && python3 apps/bahishti/tests/emulator-onboarding.py
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ABC-Native-Emulator-Evidence
+          path: abc-emulator-results/
+          retention-days: 14
+          if-no-files-found: warn
