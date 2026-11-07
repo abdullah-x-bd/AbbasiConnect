@@ -167,7 +167,13 @@ export async function registerAbcRoutes(app:FastifyInstance){
       if(!FIELD_MAP.has(change.path)||change.confidence==="LOW")continue;
       const evidence=change.evidence.trim();
       if(!evidence||!userText.toLocaleLowerCase().includes(evidence.toLocaleLowerCase()))continue;
-      let value:unknown;try{value=JSON.parse(change.value_json);}catch{continue;}
+      let value:unknown;try{value=JSON.parse(change.value_json);}catch{
+        // Models often send literal text instead of a JSON-escaped string inside value_json.
+        // Safe for text-only fields; arrays and numbers must remain parseable JSON.
+        const kind=FIELD_MAP.get(change.path)?.kind;
+        if(["text","education_description","gender","marital"].includes(kind||""))value=change.value_json;
+        else continue;
+      }
       const valid=normalizeField(change.path,value);
       if(!valid.ok){if(change.path===d.currentQuestion)issue=valid.error;continue;}
       profile=setPath(profile,change.path,valid.value);
