@@ -464,6 +464,14 @@ export async function registerAbcRoutes(app:FastifyInstance){
     return {id:updated.id,status:updated.status};
   });
 
+  // A member can remove their own ABC registration and all dependent private data.
+  app.delete("/account",async(request,reply)=>{
+    const acc=await requireAccount(request);
+    if(!acc)return reply.code(401).send({error:"ABC sign-in required"});
+    await prisma.abcRegistration.delete({where:{id:acc.registrationId}});
+    return {deleted:true};
+  });
+
   // Images are stored separately from JSON so the LLM is never sent photo bytes.
   // The JSON retains only a small pointer and explicit upload status.
   app.post("/photo",async(request,reply)=>{
