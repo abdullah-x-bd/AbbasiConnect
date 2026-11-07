@@ -9,6 +9,11 @@ collect_diagnostics() {
   adb shell dumpsys activity activities > emulator-results/activities.txt 2>/dev/null || true
   adb shell dumpsys window > emulator-results/window.txt 2>/dev/null || true
   adb exec-out screencap -p > emulator-results/final-screen.png 2>/dev/null || true
+  if grep -E 'FATAL EXCEPTION|Unable to load script|SoLoaderDSONotFoundError' emulator-results/logcat.txt > emulator-results/fatal-patterns.txt; then
+    echo "Fatal Android error signatures detected"
+    cat emulator-results/fatal-patterns.txt
+    status=1
+  fi
   if [ "$status" -ne 0 ]; then
     echo "Test failed. Relevant Android log messages:"
     grep -E -i 'org\\.abbasiconnect|AndroidRuntime|ReactNativeJS|FATAL EXCEPTION|Unable to load script|SoLoader' emulator-results/logcat.txt | tail -100 || true
@@ -22,9 +27,4 @@ adb install -r emulator-apk/app-release.apk
 adb shell pm list packages | grep -F org.abbasiconnect.app
 adb logcat -c
 python3 apps/mobile/tests/emulator-ui.py
-if grep -E 'FATAL EXCEPTION|Unable to load script|SoLoaderDSONotFoundError' emulator-results/logcat.txt > emulator-results/fatal-patterns.txt 2>/dev/null; then
-  echo "Fatal crash signatures found"
-  cat emulator-results/fatal-patterns.txt
-  exit 1
-fi
 echo "PASS: Android native runtime, login API response and navigation smoke tests"
