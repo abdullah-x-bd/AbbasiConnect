@@ -134,6 +134,7 @@ export async function interview(params:{
   try{
     const out:any=await completion(INTERVIEWER_PROMPT,JSON.stringify(payload),"abc_interviewer",talkSchema,250);
     if(!out||typeof out.message!=="string"||out.message.trim().length<5||out.message.length>460)throw new Error("Bad message");
+    if(/[\u0600-\u06ff\u0900-\u097f]/u.test(out.message)||!out.message.includes("\n"))throw new Error("ABC only supports English plus Roman-script Hindustani");
     if(next&&out.next_question_id!==next.path)throw new Error("Invalid next question");
     if(!next&&out.next_question_id!==null)throw new Error("Interview asked a question after completion");
     return {message:out.message.trim(),next_question_id:out.next_question_id,response_type:String(out.response_type||directive)};
