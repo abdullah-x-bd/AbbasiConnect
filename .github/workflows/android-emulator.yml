@@ -1,0 +1,69 @@
+name: Android emulator runtime smoke test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/android-emulator.yml"
+      - "apps/mobile/tests/emulator-ui.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  emulator-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    env:
+      CI: "1"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Retrieve the exact previously compiled Android APK
+        run: |
+          mkdir -p emulator-apk
+          gh run download 42375143949 --repo "$GITHUB_REPOSITORY" --name AbbasiConnect-Android-APK --dir emulator-apk
+          test -s emulator-apk/app-release.apk
+          ls -lh emulator-apk/app-release.apk
+      - name: Enable KVM for Android emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install APK and exercise real native screens
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: |
+            set -e
+            mkdir -p emulator-results
+            adb wait-for-device
+            adb install -r emulator-apk/app-release.apk
+            adb shell pm list packages | grep -F org.abbasiconnect.app
+            adb logcat -c
+            python3 apps/mobile/tests/emulator-ui.py
+            adb logcat -d -v threadtime > emulator-results/logcat.txt
+            if grep -E 'FATAL EXCEPTION|Unable to load script|SoLoaderDSONotFoundError' emulator-results/logcat.txt > emulator-results/fatal-patterns.txt; then
+              echo "Native fatal error signature detected"
+              cat emulator-results/fatal-patterns.txt
+              exit 1
+            fi
+            echo "Native APK runtime smoke tests passed"
+      - name: Upload screenshots and logs for review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AbbasiConnect-Emulator-Evidence
+          path: emulator-results/
+          if-no-files-found: warn
+          retention-days: 14
