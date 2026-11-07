@@ -44,21 +44,7 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: |
-            set -e
-            mkdir -p emulator-results
-            adb wait-for-device
-            adb install -r emulator-apk/app-release.apk
-            adb shell pm list packages | grep -F org.abbasiconnect.app
-            adb logcat -c
-            python3 apps/mobile/tests/emulator-ui.py
-            adb logcat -d -v threadtime > emulator-results/logcat.txt
-            if grep -E 'FATAL EXCEPTION|Unable to load script|SoLoaderDSONotFoundError' emulator-results/logcat.txt > emulator-results/fatal-patterns.txt; then
-              echo "Native fatal error signature detected"
-              cat emulator-results/fatal-patterns.txt
-              exit 1
-            fi
-            echo "Native APK runtime smoke tests passed"
+          script: bash .github/scripts/android-emulator-smoke.sh
       - name: Upload screenshots and logs for review
         if: always()
         uses: actions/upload-artifact@v4
