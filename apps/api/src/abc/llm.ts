@@ -33,7 +33,7 @@ Do not invent, infer from stereotypes, assume missing facts, transform unspoken 
 Distinguish the person speaking from the candidate. A parent can register for a child.
 For each proposed change, provide a short EXACT SUBSTRING evidence quotation from LATEST_USER_MESSAGE.
 If you cannot cite a substring of the latest message, do not propose that change.
-Use field path exactly from FIELD_DEFINITIONS. Value_json must be a JSON-encoded scalar or array.
+Use field path exactly from FIELD_DEFINITIONS. Value_json is an output STRING: for text fields put the literal text without nested quote escaping (e.g. Aftab Karim); for numeric fields use digits (e.g. 27); for language/list fields use JSON array syntax.
 For ages give integer years. Heights and weights must be centimeters and kilograms only when explicitly supported by text. Convert clearly specified feet/inches if applicable.
 Languages are [{name,can_speak,can_read,can_write}] with nulls for abilities that have not been stated. Never treat spoken fluency as proof of literacy.
 The education_description requires the user's own meaningful two sentences, not LLM-invented sentences.
