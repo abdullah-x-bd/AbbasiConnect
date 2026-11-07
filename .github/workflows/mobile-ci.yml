@@ -1,0 +1,36 @@
+name: Mobile typecheck and API contracts
+
+on:
+  push:
+    paths:
+      - "apps/mobile/**"
+      - "apps/api/src/server-v2.ts"
+      - "apps/api/src/gateway.ts"
+      - "apps/api/src/media.ts"
+      - ".github/workflows/mobile-ci.yml"
+      - "package.json"
+  pull_request:
+    paths:
+      - "apps/mobile/**"
+      - "apps/api/src/server-v2.ts"
+      - "apps/api/src/gateway.ts"
+      - "apps/api/src/media.ts"
+      - ".github/workflows/mobile-ci.yml"
+      - "package.json"
+  workflow_dispatch:
+
+jobs:
+  mobile-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install workspaces
+        run: npm install --no-audit --no-fund
+      - name: Check mobile TypeScript
+        run: npm run typecheck -w @abbasiconnect/mobile
+      - name: Check API route contract
+        run: node apps/mobile/tests/contracts.test.mjs

@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "AbbasiConnect",
+    "slug": "abbasiconnect",
+    "scheme": "abbasiconnect",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "android": {
+      "package": "org.abbasiconnect.app",
+      "permissions": []
+    },
+    "ios": {
+      "bundleIdentifier": "org.abbasiconnect.app",
+      "supportsTablet": true
+    },
+    "plugins": [
+      "expo-secure-store",
+      "react-native-quick-crypto",
+      ["expo-image-picker", {
+        "photosPermission": "Allow AbbasiConnect to choose a profile or community photo."
+      }]
+    ],
+    "extra": {
+      "appName": "AbbasiConnect"
+    }
+  }
+}
