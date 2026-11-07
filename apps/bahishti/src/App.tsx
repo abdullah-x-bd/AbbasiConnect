@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView,
-  StyleSheet, Switch, Text, TextInput, View } from "react-native";
+  StyleSheet, Switch, Text, TextInput, View, type ScrollViewInstance } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import * as SMS from "expo-sms";
 import * as Speech from "expo-speech";
@@ -93,7 +93,7 @@ function Application(){
   const [interestData,setInterestData]=useState<{sent:any[];received:any[]}>({sent:[],received:[]});
   const recorder=useAudioRecorder(RecordingPresets.LOW_QUALITY);
   const [recording,setRecording]=useState(false);
-  const chatRef=useRef<ScrollView|null>(null);
+  const chatRef=useRef<ScrollViewInstance|null>(null);
   const lang:Lang=(session?.profile?.registration?.preferred_script as Lang)||"en";
   const txt=PHRASES[lang]||PHRASES.en;
 
