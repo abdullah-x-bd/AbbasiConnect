@@ -71,7 +71,7 @@ export function freshProfile():Profile {
       ancestral_location:{city_or_town:null,district:null,state:null,country:null},
       education:{highest_qualification:null,degree_or_course:null,field_of_study:null,institution:null,two_sentence_description:null},
       occupation:{employment_status:null,profession_or_role:null,employer_or_business:null,work_city:null,income_range:null},
-      languages:[],personal_introduction:null,interests_and_hobbies:[],additional_details:null},
+      languages:[],profile_photo:null,personal_introduction:null,interests_and_hobbies:[],additional_details:null},
     family:{father:{name:null,profession:null,education:null,additional_details:null},
       mother:{name:null,profession:null,education:null,additional_details:null},
       siblings:{brothers_count:null,sisters_count:null,brothers:[],sisters:[]},
@@ -140,6 +140,7 @@ export function nextQuestion(profile:Profile,states:FieldStates):FieldDef|null {
   for(const def of FIELDS) {
     const status=states[def.path]??"not_asked";
     if(status==="answered"||status==="declined"||(status==="unknown"&&(!def.required||def.allowUnknown)))continue;
+    if(!def.required) continue;
     return def;
   }
   return null;
@@ -148,11 +149,12 @@ export function missingRequired(states:FieldStates):string[] {
   return FIELDS.filter(f=>f.required&&!["answered",...(f.allowUnknown?["unknown"]:[])].includes(states[f.path])).map(f=>f.path);
 }
 export function allFieldsResolved(states:FieldStates):boolean {
-  return FIELDS.every(f=>["answered","declined","unknown"].includes(states[f.path]));
+  return FIELDS.filter(f=>f.required).every(f=>states[f.path]==="answered"||(f.allowUnknown&&states[f.path]==="unknown"));
 }
 export function percentComplete(states:FieldStates):number {
-  const count=FIELDS.filter(f=>["answered","declined","unknown"].includes(states[f.path])).length;
-  return Math.floor(100*count/FIELDS.length);
+  const required=FIELDS.filter(f=>f.required);
+  const count=required.filter(f=>states[f.path]==="answered"||(f.allowUnknown&&states[f.path]==="unknown")).length;
+  return Math.floor(100*count/Math.max(1,required.length));
 }
 export function safeHistory(messages:ChatMessage[]):ChatMessage[] {
   return messages.slice(-60).map(m=>({role:m.role,text:m.text.slice(0,1600),at:m.at,field:m.field}));
