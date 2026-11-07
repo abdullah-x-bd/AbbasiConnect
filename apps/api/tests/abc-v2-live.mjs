@@ -34,6 +34,36 @@ try{
   assert.ok(saved.session.messages.length>2);
   console.log("PASS live AI and saved progress after login");
 
+  // Generate a real, valid 16x16 PNG image with variable-colour pixels.
+  const {deflateSync}=await import("node:zlib");
+  function crc32(buffer){let crc=0xffffffff;for(const b of buffer){crc^=b;for(let i=0;i<8;i++)crc=(crc>>>1)^((crc&1)?0xedb88320:0);}return (crc^0xffffffff)>>>0;}
+  function pngChunk(type,data){
+    const t=Buffer.from(type);const len=Buffer.alloc(4);len.writeUInt32BE(data.length);
+    const crc=Buffer.alloc(4);crc.writeUInt32BE(crc32(Buffer.concat([t,data])));
+    return Buffer.concat([len,t,data,crc]);
+  }
+  const pixels=Buffer.alloc(16*65);
+  for(let i=0;i<16;i++)for(let x=0;x<16;x++){
+    const offset=i*65+1+x*4;
+    pixels[offset]=(i*17+x*7)%256;pixels[offset+1]=(x*13+i*9)%256;
+    pixels[offset+2]=(i*19+x*23)%256;pixels[offset+3]=255;
+  }
+  const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(16,0);ihdr.writeUInt32BE(16,4);ihdr[8]=8;ihdr[9]=6;
+  const png=Buffer.concat([
+    Buffer.from([137,80,78,71,13,10,26,10]),
+    pngChunk("IHDR",ihdr),pngChunk("IDAT",deflateSync(pixels)),
+    pngChunk("IEND",Buffer.alloc(0))
+  ]);
+  assert.ok(png.length>100);
+  const upload=await req("/abc/photo","POST",{base64:png.toString("base64"),mime:"image/png"});
+  assert.equal(upload.ok,true);
+  const downloaded=await req("/abc/photo");
+  assert.ok(downloaded.dataUri.startsWith("data:image/png;base64,"));
+  assert.deepEqual(Buffer.from(downloaded.dataUri.split(",")[1],"base64"),png);
+  assert.equal((await req("/abc/state")).session.profile.candidate.profile_photo.uploaded,true);
+  console.log("PASS private optional image stored, restored and referenced in profile JSON");
+
+
   const fields={
     "candidate.full_name":"Sajid Alam","candidate.gender":"male","candidate.age_years":29,
     "candidate.height_cm":175,"candidate.marital_status":"never married",
@@ -67,6 +97,9 @@ try{
   const again=await req("/abc/login","POST",{phone,pin});
   assert.equal(again.phase,"COMPLETE");
   console.log("PASS completed login after app reinstall");
+  await req("/abc/photo","DELETE");
+  assert.equal((await req("/abc/photo")).dataUri,null);
+  console.log("PASS member removes photo");
 
 }finally{
   if(created){try{await req("/abc/account","DELETE");console.log("PASS QA account cleanup");}
