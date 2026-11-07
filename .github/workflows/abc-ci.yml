@@ -22,6 +22,8 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      DATABASE_URL: postgresql://postgres:password@localhost:5432/abc_compile_only
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
