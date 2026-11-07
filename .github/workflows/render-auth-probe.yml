@@ -35,3 +35,6 @@ jobs:
             echo "FAIL: expected HTTP 401 from valid authentication service, got HTTP $code"
             sleep 3
           done
+
+          echo "Backend authentication is unhealthy"
+          exit 1
