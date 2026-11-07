@@ -28,7 +28,10 @@ jobs:
               -d '{"username":"qa_nonexistent_172","password":"invalidQATest2026"}' \
               https://abbasiconnect-api.onrender.com/auth/sign-in)
             echo "HTTP $code"
-            cat /tmp/auth-response
-            echo
+            if [ "$code" = "401" ] && grep -q 'Incorrect username or password' /tmp/auth-response; then
+              echo "PASS: invalid login correctly rejected"
+              exit 0
+            fi
+            echo "FAIL: expected HTTP 401 from valid authentication service, got HTTP $code"
             sleep 3
           done
