@@ -183,7 +183,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
       draft.profile.registration.onboarding_mode!=="voice")
       return reply.code(409).send({error:"Choose Voice Call during onboarding first"});
     const body=z.object({sdp:z.string().min(30).max(24000)}).safeParse(request.body);
-    if(!body.success||!/^v=0\\r?\\n/m.test(body.data.sdp))
+    if(!body.success||!/^v=0\r?\n/m.test(body.data.sdp))
       return reply.code(400).send({error:"Invalid audio connection offer"});
     if(!throttle("abc-live:"+draft.id,5,60*60*1000)||
        !throttle("abc-live-ip:"+request.ip,20,60*60*1000))
@@ -204,7 +204,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
       "When backend confirms the profile is ready, thank the person and say they can review their answers on screen.",
       "If the user says stop, ask them to use End Call and tell them their answers are saved.",
       "Do not request passwords, OTPs, PINs or Aadhaar details.",
-    ].join("\\n");
+    ].join("\n");
     try{
       const response=await fetch("https://api.openai.com/v1/live/sessions",{
         method:"POST",

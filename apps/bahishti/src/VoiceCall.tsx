@@ -170,6 +170,15 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
         dc.onclose=()=>{if(activeRef.current)setStatus("ended");};
         const offer=await pc.createOffer({offerToReceiveAudio:true});
         await pc.setLocalDescription(offer);
+        // OpenAI's SDP exchange needs the final ICE candidates; avoid racing
+        // immediately after setLocalDescription on slower Android networks.
+        await new Promise<void>((resolve)=>{
+          if(pc.iceGatheringState==="complete"){resolve();return;}
+          let settled=false;
+          const finish=()=>{if(settled)return;settled=true;clearTimeout(timeout);resolve();};
+          const timeout=setTimeout(finish,5500);
+          pc.onicegatheringstatechange=()=>{if(pc.iceGatheringState==="complete")finish();};
+        });
         const sdp=pc.localDescription?.sdp||offer.sdp;
         if(!sdp)throw Error("Audio offer unavailable.");
         const joined=await api<{sessionId:string;answer:string}>("/abc/live/connect",{
