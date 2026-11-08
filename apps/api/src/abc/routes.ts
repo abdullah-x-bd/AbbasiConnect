@@ -134,7 +134,8 @@ export async function registerAbcRoutes(app:FastifyInstance){
   app.get("/health",async()=>({
     ok:true,service:"abbasi-bahishti-connections",aiConfigured:openRouterConfigured(),
     smsConfigured:Boolean(process.env.ABC_SMS_NUMBER&&process.env.ABC_SMS_WEBHOOK_SECRET),
-    model:process.env.ABC_OPENROUTER_MODEL||"google/gemini-3.1-flash-lite"
+    model:process.env.ABC_OPENROUTER_MODEL||"google/gemini-3.1-flash-lite",
+    voiceContract:"canonical-question-v2"
   }));
 
   // An early, rate-limited duplicate-number check, before verification or PIN.
@@ -498,6 +499,16 @@ export async function registerAbcRoutes(app:FastifyInstance){
       // Routine questions come from the fixed question bank, saving an LLM call.
       message=next.ask[lang];
       if(next.path===target&&issue)message=issue+". "+message;
+      if(wasAlreadyProvided&&next.path!==target){
+        const prefix=count>0?
+          localized(lang,"I found the earlier information. ","Aapka pehle diya hua jawab mil gaya. ",
+            "Aapka pehle diya hua jawab mil gaya. ","Pehle diya hua jawab mil gaya. "):
+          localized(lang,"I could not verify that earlier detail, so I will leave it for now. ",
+            "Pehla jawab pakka nahi mil saka, abhi isse chhodte hain. ",
+            "Pehla jawab pakka nahi mil saka, abhi isse chhodte hain. ",
+            "Pehla jawab pakka nahi mil saka, abhi isse chhodte hain. ");
+        message=prefix+message;
+      }
       if(!count&&extracted.classification==="AMBIGUOUS"){
         const talk=await interview({ctx:{profile,fieldStates:states,currentQuestion:next.path,recent:history,language:lang},
           next,directive,validationIssue:issue||extracted.clarification,latestUserMessage:userText});
@@ -519,7 +530,8 @@ export async function registerAbcRoutes(app:FastifyInstance){
     try{
       const saved=await store(d,{phase,profile,fieldStates:states,declines,currentQuestion:next?.path??null,messages:safeHistory(history)});
       return {session:client(saved),changesAccepted:count,classification:extracted.classification,
-        ...(isVoice?{voiceDistractionCount,voiceTermination:endForDistractions?"off_topic_limit":null}:{})};
+        ...(isVoice?{authorizedVoiceReply:shortMessage(message),voiceDistractionCount,
+          voiceTermination:endForDistractions?"off_topic_limit":null}:{})};
     }catch(e){return reply.code(409).send({error:String(e).slice(0,200)});}
   });
   app.post("/skip",async(request,reply)=>{
