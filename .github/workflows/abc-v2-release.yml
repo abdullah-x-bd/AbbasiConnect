@@ -1,4 +1,4 @@
-name: Publish ABC v1.8.0 direct APK
+name: Publish ABC v1.8.1 direct APK
 
 on:
   workflow_run:
@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 25
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: abc-bahishti-v1.8.0
+      TAG: abc-bahishti-v1.8.1
     steps:
       - uses: actions/checkout@v4
       - name: Download APK from this exact successful Android build
@@ -34,15 +34,15 @@ jobs:
           test -n "$RUN_ID"
           gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name ABC-Bahishti-Android-APK --dir abc-apk
           test -s abc-apk/app-release.apk
-          cp abc-apk/app-release.apk ABC-Bahishti-Connections-v1.8.0.apk
-          file ABC-Bahishti-Connections-v1.8.0.apk
-          ls -lh ABC-Bahishti-Connections-v1.8.0.apk
+          cp abc-apk/app-release.apk ABC-Bahishti-Connections-v1.8.1.apk
+          file ABC-Bahishti-Connections-v1.8.1.apk
+          ls -lh ABC-Bahishti-Connections-v1.8.1.apk
       - name: Publish direct-install APK
         run: |
           set -euo pipefail
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" ABC-Bahishti-Connections-v1.8.0.apk --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$TAG" ABC-Bahishti-Connections-v1.8.1.apk --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$TAG" ABC-Bahishti-Connections-v1.8.0.apk --repo "$GITHUB_REPOSITORY" --target main --title "ABC Bahishti Connections v1.8.0" --notes "ABC v1.8.0: conversational voice repair with microphone audio-level turn detection, answer buffering, safe interruptions, per-question 15-second response window, one question repeat, and backend-owned idempotent answer saving. Four-minute session maximum and fifth unrelated-answer cutoff remain. Includes Nira Hindi voice, fast deterministic question flow, latency diagnostics, existing Chat and biodata." --latest=false
+            gh release create "$TAG" ABC-Bahishti-Connections-v1.8.1.apk --repo "$GITHUB_REPOSITORY" --target main --title "ABC Bahishti Connections v1.8.1" --notes "ABC v1.8.1: fixes repeated and previously answered voice questions, preserves multi-field answers, reconciles saved profile state and recovers API conflicts without replaying stale dialogue. Retains four-minute voice limit, Chat and biodata." --latest=false
           fi
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets
