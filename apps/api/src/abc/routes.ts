@@ -288,14 +288,17 @@ export async function registerAbcRoutes(app:FastifyInstance){
   });
   app.post("/edit",async(request,reply)=>{
     const d=await requireDraft(request);if(!d)return authError(reply);
-    if(!["COLLECTING","REVIEW","VERIFY_PHONE"].includes(d.phase))return reply.code(409).send({error:"Profile cannot be edited now"});
+    if(!["COLLECTING","REVIEW","VERIFY_PHONE","COMPLETE"].includes(d.phase))return reply.code(409).send({error:"Profile cannot be edited now"});
     const body=z.object({path:z.string(),value:z.unknown()}).safeParse(request.body);
     if(!body.success)return reply.code(400).send({error:"Invalid edit"});
     const valid=normalizeField(body.data.path,body.data.value);
     if(!valid.ok)return reply.code(400).send({error:valid.error});
     const profile=setPath(d.profile,body.data.path,valid.value),states={...d.fieldStates,[body.data.path]:valid.complete?"answered":"needs_clarification" as any};
-    const next=nextQuestion(profile,states),phase:Phase=missingRequired(states).length===0&&allFieldsResolved(states)?"REVIEW":"COLLECTING";
-    const saved=await store(d,{profile,fieldStates:states,phase,currentQuestion:next?.path??null,reviewConfirmed:false});
+    const next=nextQuestion(profile,states);
+    const complete=missingRequired(states).length===0&&allFieldsResolved(states);
+    const phase:Phase=complete?(d.phase==="COMPLETE"?"COMPLETE":"REVIEW"):"COLLECTING";
+    const saved=await store(d,{profile,fieldStates:states,phase,currentQuestion:next?.path??null,
+      reviewConfirmed:complete&&d.reviewConfirmed});
     return {session:client(saved)};
   });
   app.post("/review",async(request,reply)=>{
