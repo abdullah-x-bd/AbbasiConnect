@@ -1,6 +1,6 @@
 import React from "react";
-import {ActivityIndicator,Image,Pressable,ScrollView,Text,View} from "react-native";
-import {T,st,Btn,Field,Back} from "./minimal-ui";
+import {ActivityIndicator,Image,KeyboardAvoidingView,Platform,Pressable,ScrollView,Text,View} from "react-native";
+import {T,st,Btn,Field,Back,Circle} from "./minimal-ui";
 
 export type ExtraField={path:string;en:string;roman:string;help?:string};
 export const EXTRA_FIELDS:ExtraField[]=[
@@ -95,11 +95,9 @@ export function BiodataScreen({jpegUri,profile,photoUri,busy,onBack,onSave,onSha
     </ScrollView>
   </View>;
 }
-export function EnrichmentScreen({profile,busy,selected,value,setValue,select,onSave,onBack}:{
-  profile:any;busy:boolean;selected:string;value:string;setValue:(x:string)=>void;
-  select:(field:ExtraField)=>void;onSave:()=>void;onBack:()=>void
+export function EnrichmentScreen({profile,select,onBack}:{
+  profile:any;select:(field:ExtraField)=>void;onBack:()=>void;
 }){
-  const selectedDef=EXTRA_FIELDS.find(x=>x.path===selected);
   return <View style={st.page}>
     <Header en="More details" roman="Aur jaankari" onBack={onBack}/>
     <ScrollView contentContainerStyle={{padding:20,paddingBottom:50}} keyboardShouldPersistTaps="handled">
@@ -109,27 +107,65 @@ export function EnrichmentScreen({profile,busy,selected,value,setValue,select,on
         {EXTRA_FIELDS.map((field,i)=><View key={field.path}>
           {i>0?<View style={{height:1,backgroundColor:T.border,marginVertical:13}}/>:null}
           <Pressable accessibilityRole="button" accessibilityLabel={"Edit "+field.en}
-            onPress={()=>select(field)} style={{flexDirection:"row",alignItems:"center",gap:9}}>
+            onPress={()=>select(field)} style={{flexDirection:"row",alignItems:"center",gap:9,minHeight:53}}>
             <View style={{flex:1}}>
               <Text style={{fontSize:16,color:T.ink,fontWeight:"600"}}>{field.en}</Text>
               <Text style={{fontSize:13,color:T.muted,marginTop:2}}>{field.roman}</Text>
-              {val(profile,field.path)?<Text numberOfLines={2}
+              {val(profile,field.path)?<Text numberOfLines={3}
                 style={{fontSize:13,color:T.accent,marginTop:5}}>{val(profile,field.path)}</Text>:null}
             </View>
-            <Text style={{color:T.accent,fontSize:17}}>›</Text>
+            <Text style={{color:T.accent,fontSize:19}}>›</Text>
           </Pressable>
         </View>)}
       </View>
-      {selectedDef?<View style={[st.card,{marginTop:14}]}>
-        <Text style={{fontSize:19,fontWeight:"700",color:T.ink,marginBottom:6}}>{selectedDef.en}</Text>
-        <Text style={[st.roman,{marginBottom:13,marginTop:0}]}>{selectedDef.roman}</Text>
-        {selectedDef.help?<Text style={[st.note,{marginBottom:13}]}>{selectedDef.help}</Text>:null}
-        <Field label="Your answer" roman="Apna jawaab" value={value} onChangeText={setValue}
-          multiline={selectedDef.path.includes("introduction")||selectedDef.path.includes("description")}/>
-        <Btn en="Save" roman="Save karein" onPress={onSave} disabled={!value.trim()||busy}/>
-        <View style={{height:10}}/>
-        <Btn en="Cancel" roman="Rehne dein" secondary onPress={()=>select({path:"",en:"",roman:""})}/>
-      </View>:null}
     </ScrollView>
   </View>;
+}
+
+export function ExtraDetailScreen({field,value,onChange,busy,recording,prepared,uncertain,
+  onMic,onPrepare,onSave,onCancel}:{
+  field:ExtraField;value:string;onChange:(value:string)=>void;busy:boolean;
+  recording:boolean;prepared:boolean;uncertain:boolean;
+  onMic:()=>void;onPrepare:()=>void;onSave:()=>void;onCancel:()=>void;
+}){
+  return <KeyboardAvoidingView style={st.page}
+    behavior={Platform.OS==="ios"?"padding":"height"} keyboardVerticalOffset={0}>
+    <Header en={field.en} roman={field.roman} onBack={onCancel}/>
+    <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{padding:22,paddingBottom:48}}>
+      <Text style={[st.sub,{marginTop:0,marginBottom:13}]}>
+        Speak or write naturally. ABC will clean the wording without changing your meaning.
+      </Text>
+      {field.help?<Text style={[st.note,{marginBottom:15}]}>{field.help}</Text>:null}
+      <Field label="Your answer" roman="Apna jawaab" value={value}
+        onChangeText={onChange} multiline={true} maxLength={1000}
+        placeholder="Bol kar ya likh kar batayein…"/>
+      <View style={{flexDirection:"row",alignItems:"center",gap:13,marginBottom:22,
+        padding:14,borderWidth:1,borderColor:T.border,borderRadius:16,backgroundColor:T.white}}>
+        <Circle text={recording?"■":"🎤"} kind="accent" label={recording?"Stop optional detail recording":"Speak optional detail"}
+          disabled={busy} onPress={onMic} size={48}/>
+        <View style={{flex:1}}>
+          <Text style={{fontSize:15,fontWeight:"700",color:T.ink}}>
+            {recording?"Listening. Tap to stop.":"Speak your answer"}
+          </Text>
+          <Text style={st.note}>Aapki awaaz likhi jayegi. Save khud karein.</Text>
+        </View>
+      </View>
+      {prepared?<View style={{backgroundColor:T.light,borderRadius:13,padding:13,marginBottom:16}}>
+        <Text style={{fontSize:15,fontWeight:"700",color:T.accent}}>
+          {uncertain?"Check the spelling, especially names":"Cleaned draft ready"}
+        </Text>
+        <Text style={[st.note,{marginTop:6,color:T.ink}]}>
+          You can edit the text above. Any changes can be cleaned again before saving.
+        </Text>
+      </View>:null}
+      <Btn en={prepared?"Clean again with Gemini":"Clean and review"}
+        roman="Gemini se saaf karein" onPress={onPrepare}
+        disabled={busy||recording||!value.trim()}/>
+      <View style={{height:12}}/>
+      <Btn en="Save this detail" roman="Jaankari save karein" onPress={onSave}
+        disabled={!prepared||busy||recording||!value.trim()}/>
+      <View style={{height:12}}/>
+      <Btn en="Cancel" roman="Rehne dein" secondary onPress={onCancel} disabled={busy||recording}/>
+    </ScrollView>
+  </KeyboardAvoidingView>;
 }
