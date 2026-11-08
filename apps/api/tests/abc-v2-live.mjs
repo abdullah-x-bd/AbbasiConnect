@@ -45,6 +45,9 @@ try{
   assert.equal(saved.session.profile.candidate.full_name,"Sajid Alam");
   assert.ok(saved.session.messages.length>2);
   console.log("PASS live AI and saved progress after login");
+  await req("/abc/account","DELETE",{pin:"000000"},403);
+  assert.equal((await req("/abc/me")).member.phone,phone);
+  console.log("PASS wrong PIN cannot delete the account");
 
   // Generate a real, valid 16x16 PNG image with variable-colour pixels.
   const {deflateSync}=await import("node:zlib");
@@ -112,6 +115,21 @@ try{
   await req("/abc/enrichment","POST",{path:"candidate.full_name",
     value:"Hacker",version:add.session.version},400);
   console.log("PASS optional family education, no unauthorized required-field changes");
+  const prepared=await req("/abc/enrichment/prepare","POST",{
+    path:"candidate.personal_introduction",
+    text:"I am an engineer and I enjoy reading books."
+  });
+  assert.equal(prepared.valid,true);
+  assert.ok(prepared.text.toLowerCase().includes("engineer"));
+  assert.equal(prepared.text.includes("ع"),false);
+  console.log("PASS Gemini cleanup preview does not alter saved JSON");
+  const beforeSave=(await req("/abc/state")).session.profile.candidate.personal_introduction;
+  assert.equal(beforeSave,null);
+  const polished=await req("/abc/enrichment","POST",{
+    path:"candidate.personal_introduction",value:prepared.text,version:(await req("/abc/state")).session.version
+  });
+  assert.ok(polished.session.profile.candidate.personal_introduction.includes("engineer"));
+  console.log("PASS optional detail persists only after explicit save");
 
   const done=await req("/abc/review","POST",{confirmed:true,candidateConsent:true});
   assert.equal(done.session.phase,"COMPLETE");
@@ -142,7 +160,7 @@ try{
   console.log("PASS member removes photo");
 
 }finally{
-  if(created){try{await req("/abc/account","DELETE");console.log("PASS QA account cleanup");}
+  if(created){try{await req("/abc/account","DELETE",{pin});console.log("PASS QA account cleanup");}
     catch(e){console.warn("Cleanup:",String(e));}}
 }
 console.log("ABC V2 TEST COMPLETE");

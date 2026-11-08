@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {FIELDS,FIELD_MAP,freshProfile,freshStates,normalizeField,setPath,getPath,nextQuestion,missingRequired,allFieldsResolved,CORE_GROUPS,groupProgress,inferCandidateGender} from "../src/abc/fields.ts";
+import {FIELDS,FIELD_MAP,freshProfile,freshStates,normalizeField,setPath,getPath,nextQuestion,missingRequired,allFieldsResolved,CORE_GROUPS,groupProgress,inferCandidateGender,hasNonRomanScript} from "../src/abc/fields.ts";
 
 test("all ABC fields have unique allowlisted paths and four language prompts",()=>{
   assert.equal(new Set(FIELDS.map(x=>x.path)).size,FIELDS.length);
@@ -110,4 +110,16 @@ test("deferring a question never counts it as completed",()=>{
   assert.ok(missingRequired(states).includes("candidate.full_name"));
   assert.equal(nextQuestion(profile,states,new Set(FIELDS.filter(x=>x.required).map(x=>x.path))),null);
   assert.equal(allFieldsResolved(states),false);
+});
+
+test("stored text rejects non-Roman scripts across text and collection fields",()=>{
+  assert.equal(hasNonRomanScript("Abdullah"),false);
+  assert.equal(hasNonRomanScript("عبداللہ"),true);
+  assert.equal(hasNonRomanScript("अब्दुल्लाह"),true);
+  assert.equal(hasNonRomanScript(["Delhi","Aligarh"]),false);
+  assert.equal(hasNonRomanScript([{name:"اردو"}]),true);
+  assert.equal(normalizeField("candidate.full_name","عبداللہ").ok,false);
+  assert.equal(normalizeField("candidate.full_name","Abdullah").ok,true);
+  assert.equal(normalizeField("partner_preferences.preferred_cities_or_regions",["Delhi","علیگڑھ"]).ok,false);
+  assert.equal(normalizeField("candidate.languages",[{name:"اردو",can_speak:true,can_read:false,can_write:false}]).ok,false);
 });

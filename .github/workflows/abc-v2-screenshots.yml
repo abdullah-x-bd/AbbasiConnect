@@ -2,7 +2,7 @@ name: ABC v2 every-screen native screenshots
 
 on:
   push:
-    branches: ["feature/abc-short-onboarding-biodata", "feature/abc-onboarding-surgical-v14", main]
+    branches: ["feature/abc-short-onboarding-biodata", "feature/abc-onboarding-surgical-v14", "feature/abc-roman-cleanup-enrichment-delete-v15", main]
     paths:
       - "apps/bahishti/**"
       - ".github/workflows/abc-v2-screenshots.yml"
@@ -61,7 +61,7 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: adb install -r apps/bahishti/android/app/build/outputs/apk/release/app-release.apk && python3 apps/bahishti/tests/v2-screenshots.py
-      - name: Upload 21 screen captures
+      - name: Upload 23 screen captures
         if: always()
         uses: actions/upload-artifact@v4
         with:
