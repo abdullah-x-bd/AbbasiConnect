@@ -86,6 +86,18 @@ try{
   assert.equal(final.progress,100);
   assert.deepEqual(final.missingRequired,[]);
   console.log("PASS only required JSON fields control interview completion");
+  // Extra details stay voluntary, and can be added without replaying the interview.
+  let add=await req("/abc/enrichment","POST",{path:"family.father.education",
+    value:"Bachelor's degree",version:final.version});
+  assert.equal(add.session.phase,"REVIEW");
+  assert.equal(add.session.profile.family.father.education,"Bachelor's degree");
+  add=await req("/abc/enrichment","POST",{path:"family.mother.education",
+    value:"Graduate",version:add.session.version});
+  assert.equal(add.session.profile.family.mother.education,"Graduate");
+  await req("/abc/enrichment","POST",{path:"candidate.full_name",
+    value:"Hacker",version:add.session.version},400);
+  console.log("PASS optional family education, no unauthorized required-field changes");
+
   const done=await req("/abc/review","POST",{confirmed:true,candidateConsent:true});
   assert.equal(done.session.phase,"COMPLETE");
   const me=await req("/abc/me");
@@ -94,6 +106,19 @@ try{
   await req("/abc/publish","POST",{visible:true},403);
   await req("/abc/discover");
   console.log("PASS Explore available, unverified number never falsely published");
+  const biodata=await req("/abc/biodata");
+  assert.equal(biodata.mimeType,"image/jpeg");
+  assert.equal(biodata.width,1200);assert.equal(biodata.height,1800);
+  const image=Buffer.from(biodata.base64,"base64");
+  assert.ok(image.length>15000);
+  assert.equal(image[0],255);assert.equal(image[1],216);
+  if(process.env.ABC_CAPTURE_JPEG==="1"){
+    const fs=await import("node:fs");
+    fs.mkdirSync("abc-jpeg-evidence",{recursive:true});
+    fs.writeFileSync("abc-jpeg-evidence/ABC-Sample-Biodata.jpg",image);
+  }
+  console.log("PASS real private full-resolution JPEG generation with optional photo");
+
   const again=await req("/abc/login","POST",{phone,pin});
   assert.equal(again.phase,"COMPLETE");
   console.log("PASS completed login after app reinstall");
