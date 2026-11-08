@@ -22,18 +22,21 @@ SCREENS=[
     ("09-profile-for","Registering for self or family"),
     ("10-relationship","Family relationship"),
     ("11-marital","Marital status choice"),
-    ("12-chat","Inline microphone and separate Send button"),
-    ("13-photo","Optional photo upload or skip"),
-    ("14-thank-you","Interview completion"),
-    ("15-review","Review and correct information"),
-    ("16-explore","Explore Rishte"),
-    ("17-interests","Interests inbox"),
-    ("18-profile","My profile with account deletion"),
-    ("19-delete-account","PIN-confirmed account deletion"),
-    ("20-paused","Saved conversation and resume"),
-    ("21-biodata","JPEG biodata preview"),
-    ("22-more-details","Optional enrichment list"),
-    ("23-edit-detail","Separate voice and Gemini clean-up editor")
+    ("12-mode","Chat or Voice Call choice"),
+    ("13-chat","Text chat without speech playback"),
+    ("14-voice","Voice Call controls and captions"),
+    ("15-voice-ended","Stopped call and resume options"),
+    ("16-photo","Optional photo upload or skip"),
+    ("17-thank-you","Interview completion"),
+    ("18-review","Review and correct information"),
+    ("19-explore","Explore Rishte"),
+    ("20-interests","Interests inbox"),
+    ("21-profile","My profile with account deletion"),
+    ("22-delete-account","PIN-confirmed account deletion"),
+    ("23-paused","Saved conversation and resume"),
+    ("24-biodata","JPEG biodata preview"),
+    ("25-more-details","Optional enrichment list"),
+    ("26-edit-detail","Automatic-cleanup editor")
 ]
 def adb(*args,timeout=45):
     p=subprocess.run(["adb",*args],capture_output=True,text=True,timeout=timeout)
@@ -63,14 +66,15 @@ EXPECTED=[
  "Naya account banayein","Your mobile number","This number is already registered",
  "Continue with this number","Choose a 4-digit PIN","Welcome back",
  "How should we talk","Looking for a","Whose profile is this","How are you related",
- "Marital status","Conversation","Would you like to add a photo",
+ "Marital status","How would you like to answer","Conversation","ABC Voice Call",
+ "Your answers are saved","Would you like to add a photo",
  "We have all the details","Your answers","Explore / Rishte",
  "Interests","Delete my account","Delete your ABC account","Your answers are saved",
  "Your Bio Data","More details","More about education"
 ]
 def verify_screen(i):
     expected=EXPECTED[i]
-    if i==17:
+    if i==20:
         # The deletion control sits below the visible portion of My Profile.
         # Scroll within the real screen before checking its accessibility text.
         time.sleep(1.5)
