@@ -3,7 +3,7 @@
     "name": "ABC Bahishti Connections",
     "slug": "abc-bahishti",
     "scheme": "abcbahishti",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "android": {
@@ -18,7 +18,12 @@
     },
     "plugins": [
       "expo-secure-store",
-      ["expo-image-picker", {"photosPermission": "Allow ABC to select an optional profile photo."}],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow ABC to select an optional profile photo."
+        }
+      ],
       [
         "expo-audio",
         {
