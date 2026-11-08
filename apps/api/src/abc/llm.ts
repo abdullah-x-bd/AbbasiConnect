@@ -157,7 +157,7 @@ export async function extract(ctx:Context,message:string):Promise<Extracted>{
   // BEFORE those questions are asked. The first pass must not be allowed to
   // discard such facts just because CURRENT_QUESTION was not answered.
   const educationCue=/\b(degree|bachelor|master|btech|bsc|mba|studied|study|education|university|college|graduate|qualification|taleem|padhai)\b/i.test(message);
-  const workCue=/\b(work|working|job|profession|engineer|teacher|doctor|employed|employment|company|employer|infosys|business|naukri|kaam|karobar)\b/i.test(message);
+  const workCue=/\b(work|working|job|profession|engineer|teacher|doctor|employed|employment|company|employer|sales|business|naukri|kaam|karobar)\b/i.test(message);
   const missingEducation=educationCue&&!changes.some((x:ProposedChange)=>x.path.startsWith("candidate.education."));
   const missingWork=workCue&&!changes.some((x:ProposedChange)=>x.path.startsWith("candidate.occupation."));
   const firstHadNone=changes.length===0;
