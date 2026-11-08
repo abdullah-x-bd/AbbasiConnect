@@ -3,7 +3,7 @@
     "name": "ABC Bahishti Connections",
     "slug": "abc-bahishti",
     "scheme": "abcbahishti",
-    "version": "1.5.0",
+    "version": "1.6.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "android": {
@@ -11,7 +11,11 @@
       "permissions": [
         "RECORD_AUDIO"
       ],
-      "softwareKeyboardLayoutMode": "resize"
+      "softwareKeyboardLayoutMode": "resize",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/abc-emblem.png",
+        "backgroundColor": "#FAECD5"
+      }
     },
     "ios": {
       "bundleIdentifier": "org.abbasiconnect.bahishti",
@@ -35,6 +39,16 @@
     ],
     "extra": {
       "appName": "Abbasi Bahishti Connections"
+    },
+    "icon": "./assets/abc-emblem.png",
+    "splash": {
+      "image": "./assets/abc-emblem.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FAECD5"
+    },
+    "androidStatusBar": {
+      "backgroundColor": "#FAECD5",
+      "barStyle": "dark-content"
     }
   }
 }
