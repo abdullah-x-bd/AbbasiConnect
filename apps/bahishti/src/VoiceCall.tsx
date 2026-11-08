@@ -36,6 +36,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
   const [saved,setSaved]=useState(0);
   const [secondsLeft,setSecondsLeft]=useState(MAX_CALL_MS/1000);
   const [unrelatedCount,setUnrelatedCount]=useState(0);
+  const unrelatedRef=useRef(0);
   const [silenceWarning,setSilenceWarning]=useState(false);
   const sessionRef=useRef(session);
   const rtcRef=useRef<any>(null);
@@ -176,7 +177,10 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
       if(!activeRef.current)return;
       sessionRef.current=data.session;
       setSaved(data.session.progress);
-      setUnrelatedCount(data.voiceDistractionCount||0);
+      const currentUnrelated=data.voiceDistractionCount||0;
+      const wasDistracted=currentUnrelated>unrelatedRef.current;
+      unrelatedRef.current=currentUnrelated;
+      setUnrelatedCount(currentUnrelated);
       if(data.voiceTermination==="off_topic_limit"||
          data.session.profile.registration?.onboarding_mode!=="voice"){
         shutdown();
@@ -190,7 +194,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
       }
       const next=data.session.messages.at(-1)?.text||"Please continue with the next answer.";
       const delegationId=pending.id.startsWith("local_")?null:pending.id;
-      if(data.classification==="OFF_TOPIC"||data.classification==="PARTIALLY_OFF_TOPIC"){
+      if(wasDistracted){
         send("session.instructions.append",{
           delegation_id:delegationId,
           content:"This was an unrelated response. Do not discuss its topic. Redirect immediately to the backend's profile question. Say only one or two short sentences."
