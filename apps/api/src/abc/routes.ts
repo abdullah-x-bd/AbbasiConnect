@@ -12,7 +12,8 @@ import { extract,interview,openRouterConfigured,transcribeAudio,cleanProfileValu
 import { renderBiodataJpeg,BIODATA_WIDTH,BIODATA_HEIGHT } from "./biodata.js";
 import {
   VOICE_MAX_DURATION_MS,VOICE_STARTED_KEY,VOICE_ALLOWED_OFF_TOPIC,
-  unrelatedCount,countVoiceReply,voiceCallExpired,isVoiceRepeatRequest
+  unrelatedCount,countVoiceReply,voiceCallExpired,isVoiceRepeatRequest,
+  VOICE_WAIT_STARTED_KEY,VOICE_NO_ANSWER_KEY,voiceNoAnswerDecision
 } from "./voice-policy.js";
 
 const PHONE=/^\+[1-9]\d{7,14}$/;
@@ -207,6 +208,12 @@ export async function registerAbcRoutes(app:FastifyInstance){
       "Never entertain off-topic requests, tell jokes or stories, answer unrelated questions or discuss the AI, politics, news, philosophy, or general knowledge. Politely redirect in one short sentence and repeat the current ABC question.",
       "Every full user turn, INCLUDING off-topic distractions, MUST be delegated to the ABC backend for classification. The backend, not you, counts unrelated turns. On the fifth such attempt the call must end. Do not debate the limit.",
       "The entire interview is capped at four minutes. Extended silence closes the call. Do not continue speaking to fill silence, and never ask the same question repeatedly without a user answer.",
+      "Backchannel policy: None. Do not produce listening noises, fillers or affirmations while the user speaks.",
+      "Interruption policy: Stop talking immediately if the user begins speaking. Never compete with their voice. Wait patiently through pauses and self-corrections.",
+      "Delegation policy: Backend tools: ABC validates and saves the entire spoken answer, decides whether the speaker was off-topic, and returns the one authorized next question.",
+      "Generate <|SpawnThinking|> on EVERY completed user answer, correction, repeat request or off-topic remark before speaking again. Never answer from your own knowledge. Remain silent while the backend processes the answer.",
+      "Do not generate <|SpawnThinking|> merely because a speaker pauses mid-answer. Wait until they are finished.",
+      "Do not mistake music, coughs or nearby conversations for instructions.",
       "On connecting, ask ONLY the following CURRENT QUESTION, then listen: "+initial,
       "After EVERY complete user answer, delegate to the client backend for validation and the next question. Never decide which information has been saved yourself.",
       "Wait for the backend update before asking a new question. Speak the next saved backend question, using short gentle wording.",
@@ -222,7 +229,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
           "OpenAI-Safety-Identifier":createHash("sha256").update(draft.id).digest("hex").slice(0,40)},
         body:JSON.stringify({
           session:{model:"gpt-live-1",instructions,
-            audio:{output:{voice:"marin"}},
+            audio:{output:{voice:lang==="en"?"marin":"nira"}},
             delegation:{type:"client",acknowledgement_delay_ms:800},store:false},
           transport:{type:"webrtc",sdp:body.data.sdp}
         }),
@@ -246,6 +253,39 @@ export async function registerAbcRoutes(app:FastifyInstance){
       request.log.warn({reason:String(e).slice(0,160)},"ABC voice connection error");
       return reply.code(503).send({error:"Voice connection timed out. Use Chat or try again."});
     }
+  });
+
+  // The app reports only confirmed question playback and timeout. The
+  // backend owns the repeat count, stored profile and final pause decision.
+  app.post("/live/wait",async(request,reply)=>{
+    const d=await requireDraft(request);if(!d)return authError(reply);
+    if(d.profile.registration.onboarding_mode!=="voice"||d.phase!=="COLLECTING"||
+       !d.currentQuestion)return reply.code(409).send({error:"No active voice question"});
+    const parsed=z.object({action:z.enum(["ready","timeout"]),
+      version:z.number().int().nonnegative()}).safeParse(request.body);
+    if(!parsed.success)return reply.code(400).send({error:"Invalid voice timer event"});
+    if(parsed.data.version!==d.version)return reply.code(409).send({error:"Profile changed. Refresh and retry."});
+    if(voiceCallExpired(d.declines))return reply.code(409).send({error:"Voice Call reached four minutes."});
+    const lang=getLanguage(d.profile);
+    const question=([...d.messages].reverse().find(m=>m.role==="assistant")?.text||
+      FIELD_MAP.get(d.currentQuestion)?.ask[lang]||"Please answer the current question.").slice(0,460);
+    if(parsed.data.action==="ready"){
+      const updated=await store(d,{declines:{...d.declines,[VOICE_WAIT_STARTED_KEY]:Date.now()}});
+      return {session:client(updated),action:"wait",question};
+    }
+    const decision=voiceNoAnswerDecision(d.declines);
+    if(decision==="too_soon")return {session:client(d),action:"wait",question};
+    if(decision==="repeat"){
+      const updated=await store(d,{declines:{...d.declines,
+        [VOICE_NO_ANSWER_KEY]:1,[VOICE_WAIT_STARTED_KEY]:0}});
+      return {session:client(updated),action:"repeat",question};
+    }
+    const updated=await store(d,{phase:"PAUSED",declines:{...d.declines,[VOICE_WAIT_STARTED_KEY]:0},
+      messages:safeHistory([...d.messages,note("assistant",
+        localized(lang,"No answer was heard. Your progress is saved.",
+          "Jawaab nahi mila. Aapki progress save hai.","آپ کے جواب محفوظ ہیں۔",
+          "Jawaab nahi mila. Aapki progress save hai."))])});
+    return {session:client(updated),action:"end",reason:"silence"};
   });
 
   app.post("/choice",async(request,reply)=>{
@@ -289,8 +329,15 @@ export async function registerAbcRoutes(app:FastifyInstance){
   app.post("/reply",async(request,reply)=>{
     const d=await requireDraft(request);if(!d)return authError(reply);
     if(d.phase!=="COLLECTING"||!setupComplete(d.profile)||!d.currentQuestion)return reply.code(409).send({error:"Complete your initial choices first"});
-    const body=z.object({text:z.string().trim().min(1).max(1500),version:z.number().int().nonnegative()}).safeParse(request.body);
+    const body=z.object({text:z.string().trim().min(1).max(1500),
+      version:z.number().int().nonnegative(),
+      voiceTurnId:z.string().regex(/^[A-Za-z0-9_-]{12,96}$/).optional()}).safeParse(request.body);
     if(!body.success)return reply.code(400).send({error:"Enter an answer (up to 1500 characters)"});
+    const turnKey=body.data.voiceTurnId&&d.profile.registration.onboarding_mode==="voice"?
+      "__abc_voice_turn_"+createHash("sha256").update(body.data.voiceTurnId).digest("hex").slice(0,16):null;
+    if(turnKey&&d.declines[turnKey]===1)
+      return {session:client(d),duplicate:true,voiceDistractionCount:unrelatedCount(d.declines),
+        changesAccepted:0};
     if(body.data.version!==d.version)return reply.code(409).send({error:"This interview has changed. Refresh and retry."});
     if(d.profile.registration.onboarding_mode==="voice"&&voiceCallExpired(d.declines))
       return reply.code(409).send({error:"The four-minute voice call has ended. Continue in Chat.",
@@ -316,6 +363,11 @@ export async function registerAbcRoutes(app:FastifyInstance){
     const states={...d.fieldStates};
     let declines={...d.declines};
     const isVoice=d.profile.registration.onboarding_mode==="voice";
+    if(isVoice){
+      declines[VOICE_WAIT_STARTED_KEY]=0;
+      declines[VOICE_NO_ANSWER_KEY]=0;
+      if(turnKey)declines[turnKey]=1;
+    }
     let voiceDistractionCount=isVoice?unrelatedCount(declines):0;
     let endForDistractions=false;
     if(isVoice){
@@ -366,7 +418,10 @@ export async function registerAbcRoutes(app:FastifyInstance){
         else if(FIELD_MAP.get(target)?.required){states[target]="needs_clarification";issue="We need a clear answer for this required field";}
         else states[target]="unknown";
       }else if(extracted.classification==="PAUSE"||extracted.classification==="STOP"){
-        const p=await store(d,{phase:"PAUSED",messages:safeHistory([...d.messages,note("user",userText),note("assistant",localized(lang,"Your progress is saved. You can resume when ready.","Aapke jawaab save hain.","آپ کے جواب محفوظ ہیں۔","Aapke jawaab save hain."))])});
+        const p=await store(d,{phase:"PAUSED",declines,
+          messages:safeHistory([...d.messages,note("user",userText),note("assistant",localized(lang,
+            "Your progress is saved. You can resume when ready.","Aapke jawaab save hain.",
+            "آپ کے جواب محفوظ ہیں۔","Aapke jawaab save hain."))])});
         return {session:client(p)};
       }else issue=extracted.clarification||issue||(extracted.off_topic||extracted.classification==="OFF_TOPIC"?"Let's continue with your profile":"Please give a clear answer");
     }

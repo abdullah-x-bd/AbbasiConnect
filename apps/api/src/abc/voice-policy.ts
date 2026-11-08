@@ -41,3 +41,17 @@ export function voiceCallExpired(
   return typeof started==="number"&&Number.isFinite(started)&&started>0&&
     now-started>=VOICE_MAX_DURATION_MS;
 }
+
+// Speech deadlines are enforced after confirmed question playback. Unlike a
+// transcript gap, this never assumes that an already speaking user has stopped.
+export const VOICE_WAIT_FOR_SPEECH_MS=15_000;
+export const VOICE_WAIT_STARTED_KEY="__abc_voice_question_ready_at";
+export const VOICE_NO_ANSWER_KEY="__abc_voice_no_answer_repeats";
+export function voiceNoAnswerDecision(
+  state:Record<string,number>,now:number=Date.now()
+):"too_soon"|"repeat"|"end" {
+  const started=state[VOICE_WAIT_STARTED_KEY];
+  if(!Number.isFinite(started)||started<=0||now-started<VOICE_WAIT_FOR_SPEECH_MS-600)
+    return "too_soon";
+  return (state[VOICE_NO_ANSWER_KEY]||0)>=1?"end":"repeat";
+}
