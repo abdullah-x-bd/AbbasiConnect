@@ -636,7 +636,11 @@ export async function registerAbcRoutes(app:FastifyInstance){
       const structured=def.kind==="list"?value.split(",").map(x=>x.trim()).filter(Boolean):value;
       const valid=normalizeField(def.path,structured);
       if(!valid.ok)return reply.code(400).send({error:valid.error});
-      return {text:value,uncertain:cleaned.uncertain,valid:true};
+      const previewToken=app.jwt.sign({
+        scope:"abc_enrichment_preview",accountId:acc.id,registrationId:acc.registrationId,
+        path:def.path,value:structured,version:acc.registration.version
+      },{expiresIn:"10m"});
+      return {text:value,uncertain:cleaned.uncertain,valid:true,previewToken};
     }catch(error){
       request.log.warn({reason:String(error).slice(0,160)},"ABC optional detail cleanup failed");
       return reply.code(503).send({error:"We could not clean this detail yet. Nothing was saved."});
@@ -647,17 +651,29 @@ export async function registerAbcRoutes(app:FastifyInstance){
     if(!acc)return reply.code(401).send({error:"Please log in first"});
     if(!["COMPLETE","REVIEW"].includes(acc.registration.phase))
       return reply.code(409).send({error:"Complete the basic questions first"});
-    const body=z.object({path:z.string().max(150),value:z.unknown(),version:z.number().int().nonnegative()}).safeParse(request.body);
+    const body=z.object({path:z.string().max(150),value:z.unknown(),version:z.number().int().nonnegative(),
+      previewToken:z.string().max(4000).optional()}).safeParse(request.body);
     if(!body.success)return reply.code(400).send({error:"Invalid optional detail"});
     if(body.data.version!==acc.registration.version)
       return reply.code(409).send({error:"Profile has changed. Refresh before editing."});
     const def=FIELD_MAP.get(body.data.path);
     if(!def||def.required)return reply.code(400).send({error:"Only optional fields can be added here"});
     let cleanedValue:unknown;
-    try{cleanedValue=(await cleanProfileValue(body.data.value,"polish",def.label)).value;}
-    catch(error){
-      request.log.warn({reason:String(error).slice(0,160)},"ABC enrichment save cleanup failed");
-      return reply.code(503).send({error:"The optional detail could not be cleaned. Nothing was saved."});
+    if(body.data.previewToken){
+      try{
+        const signed=app.jwt.verify<any>(body.data.previewToken);
+        if(signed.scope!=="abc_enrichment_preview"||signed.accountId!==acc.id||
+          signed.registrationId!==acc.registrationId||signed.path!==def.path||
+          signed.version!==body.data.version||JSON.stringify(signed.value)!==JSON.stringify(body.data.value))
+          return reply.code(409).send({error:"The reviewed detail has changed. Clean and review it again."});
+        cleanedValue=signed.value;
+      }catch{return reply.code(403).send({error:"Your cleaned draft expired. Please review it again."});}
+    }else{
+      try{cleanedValue=(await cleanProfileValue(body.data.value,"polish",def.label)).value;}
+      catch(error){
+        request.log.warn({reason:String(error).slice(0,160)},"ABC enrichment save cleanup failed");
+        return reply.code(503).send({error:"The optional detail could not be cleaned. Nothing was saved."});
+      }
     }
     const valid=normalizeField(body.data.path,cleanedValue);
     if(!valid.ok)return reply.code(400).send({error:valid.error});
