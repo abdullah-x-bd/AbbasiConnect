@@ -24,14 +24,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Wait for new account-registration route
+      - name: Wait for the NEW optional-details and biodata endpoints
         run: |
           for i in $(seq 1 45); do
             status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 25 \
-              -X POST -H 'content-type: application/json' \
-              -d '{}' https://abbasiconnect-api.onrender.com/abc/signup || true)
-            if [ "$status" = "400" ]; then
-              echo "ABC V2 early-signup API is available"
+              https://abbasiconnect-api.onrender.com/abc/enrichment || true)
+            if [ "$status" = "401" ]; then
+              echo "ABC biodata/enrichment deployment is available"
               exit 0
             fi
             sleep 10
