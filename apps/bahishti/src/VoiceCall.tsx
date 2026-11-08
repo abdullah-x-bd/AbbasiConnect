@@ -21,7 +21,7 @@ type Props={
 const CALL_MS=4*60*1000;
 const START_SPEAK_MS=15*1000;
 const MIC_THRESHOLD=0.027;
-const BARGE_IN_THRESHOLD=0.075;
+const BARGE_IN_THRESHOLD=0.045;
 const OUTPUT_THRESHOLD=0.022;
 const QUIET_PLAYBACK_MS=1550;
 
@@ -425,8 +425,8 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
       // levels; fall back to stable output transcript + grace period.
       const voiceFinished=outputSampledRef.current&&questionOutputRef.current&&
         outputLastAtRef.current>0&&now-outputLastAtRef.current>=QUIET_PLAYBACK_MS;
-      const transcriptFinished=!outputSampledRef.current&&outputTextLastAtRef.current>0&&
-        now-outputTextLastAtRef.current>=1900;
+      const transcriptFinished=(!outputSampledRef.current||outputLastAtRef.current===0)&&
+        outputTextLastAtRef.current>0&&now-outputTextLastAtRef.current>=1900;
       const noPlaybackFallback=now-questionIssuedRef.current>=7000&&!seenOutputRef.current;
       if(voiceFinished||transcriptFinished||noPlaybackFallback)
         void markQuestionPlayed(questionSeqRef.current);
