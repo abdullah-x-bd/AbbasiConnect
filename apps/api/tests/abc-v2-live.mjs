@@ -140,7 +140,7 @@ try{
   const romanPreview=await req("/abc/enrichment/prepare","POST",{
     path:"candidate.personal_introduction",text:"میرا نام عبداللہ ہے۔"
   });
-  assert.ok(!/[^\\p{Script=Latin}\\p{Script=Common}\\p{Script=Inherited}]/u.test(romanPreview.text),
+  assert.ok(!/[^\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(romanPreview.text),
     "Urdu answer still contains a non-Roman script");
   console.log("PASS spoken-style Urdu detail is returned in Roman script");
 
