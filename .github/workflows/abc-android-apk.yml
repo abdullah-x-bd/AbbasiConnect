@@ -8,6 +8,7 @@ on:
       - ".github/workflows/abc-android-apk.yml"
       - "package.json"
       - "package-lock.json"
+  pull_request:
   workflow_dispatch:
 
 permissions:
