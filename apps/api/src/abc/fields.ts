@@ -83,6 +83,29 @@ export function freshProfile():Profile {
 export function freshStates():FieldStates {
   return Object.fromEntries(FIELDS.map(x=>[x.path,"not_asked"])) as FieldStates;
 }
+/**
+ * Repair mismatches between persisted values and the separate field-state map.
+ * A real, validated saved value takes precedence over an obsolete "not_asked"
+ * status. Conversely a status of "answered" cannot mask a missing/invalid value.
+ * Never infer facts or treat a declined/unknown value as an actual answer.
+ */
+export function reconcileFieldStates(profile:Profile,states:FieldStates):FieldStates {
+  const result={...states};
+  for(const def of FIELDS){
+    const value=getPath(profile,def.path);
+    const present=value!==null&&value!==undefined&&
+      !(typeof value==="string"&&!value.trim())&&
+      !(Array.isArray(value)&&value.length===0);
+    if(!present){
+      if(result[def.path]==="answered")result[def.path]="needs_clarification";
+      continue;
+    }
+    const validation=normalizeField(def.path,value);
+    if(validation.ok&&validation.complete)result[def.path]="answered";
+    else if(result[def.path]==="answered")result[def.path]="needs_clarification";
+  }
+  return result;
+}
 export function getPath(object:Profile,path:string):unknown {
   return path.split(".").reduce((v:any,key)=>v && typeof v==="object"?v[key]:undefined,object);
 }
