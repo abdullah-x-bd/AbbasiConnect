@@ -229,7 +229,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
       try{
         const res=await api<{
           session:Session;voiceDistractionCount?:number;voiceTermination?:string;
-          classification?:string;duplicate?:boolean;
+          classification?:string;duplicate?:boolean;authorizedVoiceReply?:string;
         }>("/abc/reply",{method:"POST",body:{text,version,voiceTurnId:turnId}});
         if(!activeRef.current)return;
         sessionRef.current=res.session;
@@ -255,7 +255,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
           audioAllowed(false);
           return;
         }
-        const question=res.session.currentQuestionText;
+        const question=res.authorizedVoiceReply||res.session.currentQuestionText;
         if(!question){shutdown();return;}
         const lead=wasDistracted?"Please stay with the profile questions. ":"";
         setRepeatCount(0);
