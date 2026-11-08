@@ -170,7 +170,8 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     // Never start the countdown until after question playback ends.
     try{
       const d=await api<{session:Session;action:string}>("/abc/live/wait",{
-        method:"POST",body:{action:"ready",version:sessionRef.current.version}
+        method:"POST",body:{action:"ready",version:sessionRef.current.version,
+          questionPath:sessionRef.current.currentQuestion}
       });
       if(!activeRef.current)return;
       sessionRef.current=d.session;
@@ -198,7 +199,8 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     timeoutLockRef.current=true;
     try{
       const res=await api<{session:Session;action:"wait"|"repeat"|"end";question?:string}>("/abc/live/wait",{
-        method:"POST",body:{action:"timeout",version:sessionRef.current.version}
+        method:"POST",body:{action:"timeout",version:sessionRef.current.version,
+          questionPath:sessionRef.current.currentQuestion}
       });
       if(!activeRef.current)return;
       sessionRef.current=res.session;
@@ -221,14 +223,14 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     // playback. Wait for that write before sending the versioned answer.
     for(let i=0;i<40&&waitLockRef.current&&activeRef.current;i++)await sleep(80);
     if(!activeRef.current)return;
-    const started=Date.now(),version=sessionRef.current.version;
-    const payload={text,version,voiceTurnId:turnId};
-    for(let attempt=0;attempt<2;attempt++){
+    const started=Date.now();
+    let version=sessionRef.current.version;
+    for(let attempt=0;attempt<3;attempt++){
       try{
         const res=await api<{
           session:Session;voiceDistractionCount?:number;voiceTermination?:string;
           classification?:string;duplicate?:boolean;
-        }>("/abc/reply",{method:"POST",body:payload});
+        }>("/abc/reply",{method:"POST",body:{text,version,voiceTurnId:turnId}});
         if(!activeRef.current)return;
         sessionRef.current=res.session;
         setSaved(res.session.progress);
@@ -253,7 +255,8 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
           audioAllowed(false);
           return;
         }
-        const question=res.session.messages.at(-1)?.text||"Please continue with the next question.";
+        const question=res.session.currentQuestionText;
+        if(!question){shutdown();return;}
         const lead=wasDistracted?"Please stay with the profile questions. ":"";
         setRepeatCount(0);
         issueQuestion(lead+question,delegationId);
@@ -262,12 +265,21 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
         if(!activeRef.current)return;
         const message=explain(exc);
         if(/four-minute|time limit/i.test(message)){end("time_limit");return;}
-        if(attempt===0){await sleep(550);continue;}
-        setError("Your answer was not saved. Please repeat it. "+message);
-        // Keep the current question. Never advance after a failed save.
-        const current=[...sessionRef.current.messages].reverse().find(m=>m.role==="assistant")?.text||
-          "Please answer the current question.";
-        issueQuestion(current,null);
+        // Refresh after a conflict or an uncertain network outcome. A retry
+        // with the same turn ID is idempotent even if the previous save won.
+        try{
+          const latest=await api<{session:Session}>("/abc/state");
+          if(!activeRef.current)return;
+          sessionRef.current=latest.session;
+          onSessionRef.current(latest.session);
+          version=latest.session.version;
+        }catch{}
+        if(attempt<2){await sleep(550);continue;}
+        setError("Your answer could not be confirmed. Please try speaking again. "+message);
+        // Never replay historical dialogue after an HTTP failure.
+        audioAllowed(false);
+        setPhase("waiting");
+        waitingAtRef.current=0;
       }
     }
   }
@@ -363,9 +375,8 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
       setStatus("connected");
       if(!greetingSentRef.current&&channelRef.current?.readyState==="open"){
         greetingSentRef.current=true;
-        const opening=[...sessionRef.current.messages].reverse()
-          .find(m=>m.role==="assistant")?.text||"Please tell me your full name and age.";
-        issueQuestion(opening,null);
+        const opening=sessionRef.current.currentQuestionText;
+        if(opening)issueQuestion(opening,null);
       }
       return;
     }
@@ -445,9 +456,8 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
       if(!collectorRef.current.hasText()&&lastUserActivityRef.current>0&&
         now-lastUserActivityRef.current>9500){
         setError("I didn't catch that answer. Please try speaking again.");
-        const current=[...sessionRef.current.messages].reverse()
-          .find(m=>m.role==="assistant")?.text||"Please answer the current question.";
-        issueQuestion(current,null);
+        const current=sessionRef.current.currentQuestionText;
+        if(current)issueQuestion(current,null);
         lastUserActivityRef.current=0;
       }
     }else if(p==="processing"){
@@ -508,9 +518,8 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
         watchdogRef.current=setInterval(watchdog,300);
         if(openaiReadyRef.current&&dc.readyState==="open"&&!greetingSentRef.current){
           greetingSentRef.current=true;
-          const opening=[...sessionRef.current.messages].reverse()
-            .find(m=>m.role==="assistant")?.text||"Please tell me your full name and age.";
-          issueQuestion(opening,null);
+          const opening=sessionRef.current.currentQuestionText;
+          if(opening)issueQuestion(opening,null);
         }
       }catch(exc){
         if(activeRef.current){
