@@ -51,3 +51,10 @@ test("audio levels use microphone and inbound speaker tracks if available",()=>{
  assert.equal(audioLevels(null).mic,null);
 });
 test("time formatting",()=>assert.equal(humanTimer(125),"2:05"));
+
+test("remote audio track levels are never mistaken for microphone speech",()=>{
+ const stats=new Map([["remote",{type:"track",kind:"audio",isRemote:true,audioLevel:0.3}]]);
+ const result=audioLevels(stats);
+ assert.equal(result.mic,null);
+ assert.equal(result.speaker,null);
+});

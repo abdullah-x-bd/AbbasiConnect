@@ -88,8 +88,10 @@ export function audioLevels(stats:unknown,previous?:{inEnergy:number;inDuration:
     const type=String(row.type||"").toLowerCase();
     const level=Number(row.audioLevel);
     const hasLevel=Number.isFinite(level)&&level>=0&&level<=1;
-    if((type==="media-source"||type==="track")&&kind==="audio"&&hasLevel)
+    if(type==="media-source"&&kind==="audio"&&hasLevel)
       mic=level;
+    // Remote audio tracks can have their own audioLevel. Treating those as
+    // microphone input makes ABC falsely interrupt itself while speaking.
     if(type==="inbound-rtp"&&kind==="audio"||type==="inbound-rtp"&&row.isRemote===true){
       const energy=Number(row.totalAudioEnergy),dur=Number(row.totalSamplesDuration);
       if(Number.isFinite(energy)&&Number.isFinite(dur)&&dur>inDuration&&energy>=inEnergy){
