@@ -125,11 +125,24 @@ try{
   console.log("PASS Gemini cleanup preview does not alter saved JSON");
   const beforeSave=(await req("/abc/state")).session.profile.candidate.personal_introduction;
   assert.equal(beforeSave,null);
+  const beforePolishVersion=(await req("/abc/state")).session.version;
+  await req("/abc/enrichment","POST",{
+    path:"candidate.personal_introduction",value:prepared.text+" extra",version:beforePolishVersion,
+    previewToken:prepared.previewToken
+  },409);
   const polished=await req("/abc/enrichment","POST",{
-    path:"candidate.personal_introduction",value:prepared.text,version:(await req("/abc/state")).session.version
+    path:"candidate.personal_introduction",value:prepared.text,version:beforePolishVersion,
+    previewToken:prepared.previewToken
   });
   assert.ok(polished.session.profile.candidate.personal_introduction.includes("engineer"));
-  console.log("PASS optional detail persists only after explicit save");
+  assert.equal(polished.session.profile.candidate.personal_introduction,prepared.text);
+  console.log("PASS only exact Gemini-reviewed text can be saved with a signed preview");
+  const romanPreview=await req("/abc/enrichment/prepare","POST",{
+    path:"candidate.personal_introduction",text:"میرا نام عبداللہ ہے۔"
+  });
+  assert.ok(!/[^\\p{Script=Latin}\\p{Script=Common}\\p{Script=Inherited}]/u.test(romanPreview.text),
+    "Urdu answer still contains a non-Roman script");
+  console.log("PASS spoken-style Urdu detail is returned in Roman script");
 
   const done=await req("/abc/review","POST",{confirmed:true,candidateConsent:true});
   assert.equal(done.session.phase,"COMPLETE");

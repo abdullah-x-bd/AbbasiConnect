@@ -43,6 +43,6 @@ jobs:
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" ABC-Bahishti-Connections-v1.5.apk --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$TAG" ABC-Bahishti-Connections-v1.5.apk --repo "$GITHUB_REPOSITORY" --target main --title "ABC Bahishti Connections v1.5" --notes "ABC v1.5: adaptive seven-group interview, default Hinglish or English choice, inferred gender, marital choice, keyboard-aware Android chat, inline mic transcription with manual Send, tap-to-speak replies, three-irrelevant-response deferral, one-time optional photo offer, early duplicate-number redirect. Existing WhatsApp 1080×1350 JPEG retained. Temporary phone verification remains unchanged." --latest=false
+            gh release create "$TAG" ABC-Bahishti-Connections-v1.5.apk --repo "$GITHUB_REPOSITORY" --target main --title "ABC Bahishti Connections v1.5" --notes "ABC v1.5: voice transcripts and profile JSON normalized to Roman letters, Gemini-reviewed language-preserving optional details with dedicated voice editor, and PIN-confirmed permanent account deletion. Existing ABC v1.4 short interview and WhatsApp biodata remain intact. Aadhaar QR deferred." --latest=false
           fi
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets
