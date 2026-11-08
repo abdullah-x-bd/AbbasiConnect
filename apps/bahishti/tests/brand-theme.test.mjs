@@ -34,3 +34,11 @@ test("shared ivory and dark-green theme is applied across existing screens",()=>
   assert.match(app,/BrandLogo size=\{64\}/);
   assert.match(extras,/BrandLogo size=\{48\}/);
 });
+
+test("optional details have automatic text cleanup and direct Save without a manual Gemini button",()=>{
+  assert.doesNotMatch(extras,/Clean again with Gemini|Clean and review|onPrepare/);
+  assert.match(extras,/Voice is cleaned automatically/);
+  assert.match(extras,/Save this detail/);
+  assert.match(app,/extraPreviewToken/);
+  assert.doesNotMatch(app,/prepareExtra\(/);
+});

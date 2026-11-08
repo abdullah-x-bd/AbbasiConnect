@@ -687,13 +687,31 @@ export async function registerAbcRoutes(app:FastifyInstance){
   app.post("/audio/transcribe",async(request,reply)=>{
     const d=await requireDraft(request);if(!d)return authError(reply);
     if(!["COLLECTING","REVIEW","COMPLETE"].includes(d.phase))return reply.code(409).send({error:"Speech input is unavailable right now"});
-    const body=z.object({data:z.string().max(1200000),format:z.enum(["m4a","wav","mp3"])}).safeParse(request.body);
+    const body=z.object({data:z.string().max(1200000),format:z.enum(["m4a","wav","mp3"]),path:z.string().max(150).optional()}).safeParse(request.body);
     if(!body.success)return reply.code(400).send({error:"Invalid audio clip"});
+    const optionalField=body.data.path?FIELD_MAP.get(body.data.path):undefined;
+    if(body.data.path&&(!optionalField||optionalField.required))
+      return reply.code(400).send({error:"Invalid optional field for voice input"});
+    const account=optionalField?await requireAccount(request):null;
+    if(optionalField&&!account)return reply.code(401).send({error:"Sign in to add optional details"});
     if(!throttle("abc-audio:"+d.id,12,60*60*1000))return reply.code(429).send({error:"Audio limit reached"});
     try{
       const transcript=await transcribeAudio(body.data.data,body.data.format);
-      const normalized=await cleanProfileValue(transcript,"speech","Dictated ABC answer");
-      return {text:String(normalized.value),uncertain:normalized.uncertain};
+      const normalized=await cleanProfileValue(transcript,"speech",optionalField?.label||"Dictated ABC answer");
+      const text=String(normalized.value);
+      if(optionalField&&account){
+        const value=optionalField.kind==="list"?text.split(",").map(v=>v.trim()).filter(Boolean):text;
+        const valid=normalizeField(optionalField.path,value);
+        if(valid.ok){
+          // Reuse the cleaned text as the exact, user-visible draft at Save.
+          const previewToken=app.jwt.sign({
+            scope:"abc_enrichment_preview",userId:account.id,registrationId:account.registrationId,
+            path:optionalField.path,value:valid.value,version:account.registration.version
+          },{expiresIn:"10m"});
+          return {text,uncertain:normalized.uncertain,previewToken};
+        }
+      }
+      return {text,uncertain:normalized.uncertain};
     }catch(error){
       request.log.warn({reason:String(error).slice(0,160)},"ABC cleaned transcription failed");
       return reply.code(503).send({error:"Speech cleanup is unavailable. Please type your answer."});
