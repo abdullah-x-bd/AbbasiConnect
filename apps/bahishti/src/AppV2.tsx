@@ -119,6 +119,7 @@ function App(){
   const [image,setImage]=useState<string|null>(null);
   const [photoSaved,setPhotoSaved]=useState(false);
   const [recording,setRecording]=useState(false);
+  const [voiceUncertain,setVoiceUncertain]=useState(false);
   const [consent,setConsent]=useState(false);
   const [city,setCity]=useState("");
   const [candidates,setCandidates]=useState<Candidate[]>([]);
@@ -132,6 +133,7 @@ function App(){
   const [extraPath,setExtraPath]=useState("");
   const [extraValue,setExtraValue]=useState("");
   const [extraPrepared,setExtraPrepared]=useState(false);
+  const [extraPreviewToken,setExtraPreviewToken]=useState("");
   const [extraUncertain,setExtraUncertain]=useState(false);
   const [extraRecording,setExtraRecording]=useState(false);
   const [deletePin,setDeletePin]=useState("");
@@ -244,7 +246,7 @@ function App(){
       const result=await api<{session:Session}>("/abc/reply",{
         method:"POST",body:{text:answer.trim(),version:session.version}
       });
-      setText("");
+      setText("");setVoiceUncertain(false);
       goState(result.session);
     });
   }
@@ -267,10 +269,11 @@ function App(){
       if(!recorder.uri)throw Error("No recording was captured. / Awaaz nahi mili.");
       const data=await new File(recorder.uri).base64();
       if(data.length>1200000)throw Error("Please use a shorter voice answer. / Chhoti recording karein.");
-      const result=await api<{text:string}>("/abc/audio/transcribe",{
+      const result=await api<{text:string;uncertain?:boolean}>("/abc/audio/transcribe",{
         method:"POST",body:{data,format:"m4a"}
       });
       setText(current=>current.trim()?current.trim()+" "+result.text:result.text);
+      setVoiceUncertain(Boolean(result.uncertain));
     });
   }
   async function checkPhone(){
@@ -324,15 +327,15 @@ function App(){
     setExtraPath(field.path);
     const existing=readAt(session?.profile||account?.profile,field.path);
     setExtraValue(Array.isArray(existing)?existing.join(", "):existing==null?"":String(existing));
-    setExtraPrepared(false);setExtraUncertain(false);setExtraRecording(false);
+    setExtraPrepared(false);setExtraPreviewToken("");setExtraUncertain(false);setExtraRecording(false);
     setScreen("enrichEdit");
   }
   function openExtras(back:"done"|"profile"){
     setExtraBack(back);setExtraPath("");setExtraValue("");
-    setExtraPrepared(false);setExtraUncertain(false);setScreen("enrich");
+    setExtraPrepared(false);setExtraPreviewToken("");setExtraUncertain(false);setScreen("enrich");
   }
   function cancelExtra(){
-    setExtraPath("");setExtraValue("");setExtraPrepared(false);setExtraUncertain(false);
+    setExtraPath("");setExtraValue("");setExtraPrepared(false);setExtraPreviewToken("");setExtraUncertain(false);
     setScreen("enrich");
   }
   async function toggleExtraVoice(){
@@ -348,7 +351,7 @@ function App(){
           method:"POST",body:{data,format:"m4a"}
         });
         setExtraValue(old=>old.trim()?old.trim()+" "+result.text:result.text);
-        setExtraPrepared(false);setExtraUncertain(Boolean(result.uncertain));
+        setExtraPrepared(false);setExtraPreviewToken("");setExtraUncertain(Boolean(result.uncertain));
       });
       return;
     }
@@ -365,10 +368,11 @@ function App(){
     if(!extraPath||!extraValue.trim())return;
     if(PREVIEW){setExtraPrepared(true);return;}
     await task(async()=>{
-      const prepared=await api<{text:string;uncertain:boolean}>("/abc/enrichment/prepare",{
+      const prepared=await api<{text:string;uncertain:boolean;previewToken:string}>("/abc/enrichment/prepare",{
         method:"POST",body:{path:extraPath,text:extraValue.trim()}
       });
       setExtraValue(prepared.text);
+      setExtraPreviewToken(prepared.previewToken);
       setExtraUncertain(prepared.uncertain);
       setExtraPrepared(true);
     });
@@ -380,10 +384,10 @@ function App(){
       const value=extraPath==="partner_preferences.preferred_cities_or_regions"?
         extraValue.split(",").map(x=>x.trim()).filter(Boolean):extraValue.trim();
       const result=await api<{session:Session}>("/abc/enrichment",{method:"POST",body:{
-        path:extraPath,value,version:session.version
+        path:extraPath,value,version:session.version,previewToken:extraPreviewToken
       }});
       setSession(result.session);
-      setExtraPath("");setExtraValue("");setExtraPrepared(false);setExtraUncertain(false);
+      setExtraPath("");setExtraValue("");setExtraPrepared(false);setExtraPreviewToken("");setExtraUncertain(false);
       await refreshAccount();
       setScreen("enrich");
     });
@@ -573,7 +577,7 @@ function App(){
         <TextInput style={styles.composeInput}
           placeholder={profile.registration?.preferred_language==="en"?"Type your answer…":"Apna jawab likhein…"}
           accessibilityLabel="Your answer" multiline placeholderTextColor={T.faint}
-          value={text} onChangeText={setText} onFocus={()=>
+          value={text} onChangeText={value=>{setText(value);setVoiceUncertain(false);}} onFocus={()=>
             requestAnimationFrame(()=>scrollRef.current?.scrollToEnd({animated:true}))}/>
         <Circle text={recording?"■":"🎤"} kind="accent" size={43} disabled={busy}
           label={recording?"Stop voice recording":"Start voice recording"}
@@ -581,6 +585,9 @@ function App(){
         <Circle text="↑" kind="accent" size={46} disabled={busy||recording||!text.trim()}
           label="Send answer" onPress={()=>void sendAnswer(text)}/>
       </View>
+      {voiceUncertain?<Text style={[st.note,{paddingHorizontal:16,paddingBottom:7,color:T.danger}]}>
+        Please check the spelling of names before sending.
+      </Text>:null}
     </KeyboardAvoidingView>;
   }
   function reviewPage(){
@@ -890,7 +897,7 @@ function App(){
       field={EXTRA_FIELDS.find(x=>x.path===extraPath)||EXTRA_FIELDS[0]}
       value={extraValue} busy={busy} recording={extraRecording}
       prepared={extraPrepared} uncertain={extraUncertain}
-      onChange={value=>{setExtraValue(value);setExtraPrepared(false);}}
+      onChange={value=>{setExtraValue(value);setExtraPrepared(false);setExtraPreviewToken("");}}
       onMic={()=>void toggleExtraVoice()} onPrepare={()=>void prepareExtra()}
       onSave={()=>void saveExtra()} onCancel={cancelExtra}/>;
     if(screen==="review")return reviewPage();
