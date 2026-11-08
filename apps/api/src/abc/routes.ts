@@ -44,7 +44,8 @@ function readDraft(x:any):Draft {
 // The profile and field statuses, never historical assistant text, are the
 // authority for the question currently allowed to be spoken.
 function activeQuestion(d:Draft){
-  if(d.phase!=="COLLECTING")return null;
+  // Preliminary choices are not part of the spoken interview.
+  if(d.phase!=="COLLECTING"||!setupComplete(d.profile))return null;
   const deferred=new Set(Object.keys(d.declines).filter(path=>
     FIELD_MAP.has(path)&&d.declines[path]>=3&&d.fieldStates[path]!=="answered"));
   return nextQuestion(d.profile,d.fieldStates,deferred);
