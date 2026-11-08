@@ -373,7 +373,9 @@ export async function registerAbcRoutes(app:FastifyInstance){
     if(!throttle("abc-reply:"+d.id,14,60*1000))return reply.code(429).send({error:"Too many replies. Please wait a moment."});
     const lang=getLanguage(d.profile),userText=body.data.text;
     const isVoice=d.profile.registration.onboarding_mode==="voice";
-    const wasAlreadyProvided=isVoice&&isVoiceAlreadyProvided(userText);
+    // Recovery works in both Voice Call and Chat; changing input modes must
+    // never reintroduce a previously answered-question loop.
+    const wasAlreadyProvided=isVoiceAlreadyProvided(userText);
     if(isVoice&&isVoiceRepeatRequest(userText)){
       // Repeat requests are legitimate interviewing controls, not distractions.
       // Preserve the current question without sending an extra extraction call.
