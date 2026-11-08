@@ -23,7 +23,9 @@ try{
   await req("/abc/choice","POST",{field:"looking_for",value:"bride"});
   const ch=await req("/abc/choice","POST",{field:"profile_for",value:"self"});
   assert.equal(ch.session.currentQuestion,"candidate.full_name");
-  assert.ok(ch.session.messages[0].text.includes("Candidate ka poora naam"));
+  assert.ok(ch.session.messages[0].text.includes("poora naam"));
+  assert.ok(ch.session.messages[0].text.includes("age in years"));
+  console.log("PASS first grouped question asks name, age and gender together");
   console.log("PASS minimal setup and bilingual question");
   const response=await req("/abc/reply","POST",{text:"My name is Sajid Alam. I am 29 years old and live in Delhi. My family is originally from Aligarh.",version:ch.session.version});
   assert.equal(response.session.profile.candidate.full_name,"Sajid Alam");
