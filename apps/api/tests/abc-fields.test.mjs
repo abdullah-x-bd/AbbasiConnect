@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {FIELDS,FIELD_MAP,freshProfile,freshStates,normalizeField,setPath,getPath,nextQuestion,missingRequired,allFieldsResolved} from "../src/abc/fields.ts";
+import {FIELDS,FIELD_MAP,freshProfile,freshStates,normalizeField,setPath,getPath,nextQuestion,missingRequired,allFieldsResolved,CORE_GROUPS,groupProgress} from "../src/abc/fields.ts";
 
 test("all ABC fields have unique allowlisted paths and four language prompts",()=>{
   assert.equal(new Set(FIELDS.map(x=>x.path)).size,FIELDS.length);
@@ -57,9 +57,40 @@ test("question order skips answered and declined optional fields",()=>{
   states["candidate.age_years"]="answered";
   states["candidate.height_cm"]="answered";
   states["candidate.weight_kg"]="declined";
-  assert.equal(nextQuestion(p,states).path,"candidate.marital_status");
+  assert.equal(nextQuestion(p,states).path,"candidate.current_location.city");
   for(const def of FIELDS)states[def.path]="answered";
   assert.equal(nextQuestion(p,states),null);
   assert.equal(allFieldsResolved(states),true);
   assert.deepEqual(missingRequired(states),[]);
+});
+
+test("seven grouped questions cover exactly fifteen essential fields",()=>{
+  assert.equal(CORE_GROUPS.length,7);
+  const paths=CORE_GROUPS.flatMap(g=>g.paths);
+  assert.equal(new Set(paths).size,paths.length);
+  const core=FIELDS.filter(f=>f.required);
+  assert.equal(paths.length,core.length);
+  for(const def of core)assert.ok(paths.includes(def.path),"Missing "+def.path);
+  const profile=freshProfile(),states=freshStates();
+  const first=nextQuestion(profile,states);
+  assert.deepEqual(first.targetPaths,["candidate.full_name","candidate.age_years","candidate.gender"]);
+  assert.ok(first.ask.en.includes("name"));
+  assert.ok(first.ask.roman.includes("naam"));
+  states["candidate.full_name"]="answered";
+  const next=nextQuestion(profile,states);
+  assert.deepEqual(next.targetPaths,["candidate.age_years","candidate.gender"]);
+  states["candidate.age_years"]="answered";states["candidate.gender"]="answered";
+  assert.equal(nextQuestion(profile,states).path,"candidate.current_location.city");
+  assert.deepEqual(groupProgress(states),{finished:1,total:7});
+});
+test("optional qualifications and interests never extend the basic interview",()=>{
+  const states=freshStates(),profile=freshProfile();
+  for(const def of FIELDS)if(def.required)states[def.path]="answered";
+  assert.deepEqual(missingRequired(states),[]);
+  assert.equal(nextQuestion(profile,states),null);
+  assert.equal(allFieldsResolved(states),true);
+  for(const path of ["family.father.education","family.mother.education","candidate.languages",
+    "candidate.education.two_sentence_description","partner_preferences.other_preferences"]){
+    assert.equal(states[path],"not_asked");
+  }
 });
