@@ -637,7 +637,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
       const valid=normalizeField(def.path,structured);
       if(!valid.ok)return reply.code(400).send({error:valid.error});
       const previewToken=app.jwt.sign({
-        scope:"abc_enrichment_preview",accountId:acc.id,registrationId:acc.registrationId,
+        scope:"abc_enrichment_preview",userId:acc.id,registrationId:acc.registrationId,
         path:def.path,value:structured,version:acc.registration.version
       },{expiresIn:"10m"});
       return {text:value,uncertain:cleaned.uncertain,valid:true,previewToken};
@@ -662,7 +662,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
     if(body.data.previewToken){
       try{
         const signed=app.jwt.verify<any>(body.data.previewToken);
-        if(signed.scope!=="abc_enrichment_preview"||signed.accountId!==acc.id||
+        if(signed.scope!=="abc_enrichment_preview"||signed.userId!==acc.id||
           signed.registrationId!==acc.registrationId||signed.path!==def.path||
           signed.version!==body.data.version||JSON.stringify(signed.value)!==JSON.stringify(body.data.value))
           return reply.code(409).send({error:"The reviewed detail has changed. Clean and review it again."});
