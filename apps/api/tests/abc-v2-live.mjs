@@ -110,7 +110,7 @@ try{
   console.log("PASS Explore available, unverified number never falsely published");
   const biodata=await req("/abc/biodata");
   assert.equal(biodata.mimeType,"image/jpeg");
-  assert.equal(biodata.width,1200);assert.equal(biodata.height,1800);
+  assert.equal(biodata.width,1080);assert.equal(biodata.height,1350);
   const image=Buffer.from(biodata.base64,"base64");
   assert.ok(image.length>15000);
   assert.equal(image[0],255);assert.equal(image[1],216);
