@@ -35,7 +35,7 @@ test("biodata renders genuine WhatsApp-ready 1080 x 1350 JPEG",async()=>{
     assert.ok(biodataSvg(p).toLowerCase().includes(phrase.toLowerCase()),"missing "+phrase);
   }
 });
-test("JPEG contains no mobile number or private PIN even if supplied in profile",async()=>{
+test("Biodata does not infer private numbers or PIN from arbitrary profile fields",async()=>{
   const p=sample();
   p.registration.phone="+911234567890";
   p.candidate.pin="1234";
@@ -91,4 +91,22 @@ test("4:5 export has readable bilingual labels and omits fields not supplied",as
   }
   const bytes=await renderBiodataJpeg(p,null);
   assert.equal((await sharp(bytes).metadata()).height,1350);
+});
+
+test("export includes registered contact number while retaining JPEG dimensions",async()=>{
+  const p=sample(),phone="+919876543210";
+  assert.ok(biodataSvg(p,phone).includes("Contact / Rabta: +919876543210"));
+  const bytes=await renderBiodataJpeg(p,null,phone);
+  const info=await sharp(bytes).metadata();
+  assert.equal(info.format,"jpeg");
+  assert.equal(info.width,1080);
+  assert.equal(info.height,1350);
+});
+test("only explicitly supplied valid E.164 contact can be rendered",()=>{
+  const p=sample();
+  p.registration.phone="+911234567890";
+  assert.ok(!biodataSvg(p).includes("+911234567890"));
+  assert.ok(!biodataSvg(p,"invalid").includes("Contact / Rabta"));
+  assert.ok(!biodataSvg(p,"+911234567890<fake>").includes("Contact / Rabta"));
+  assert.ok(biodataSvg(p,"+919998887776").includes("Contact / Rabta: +919998887776"));
 });

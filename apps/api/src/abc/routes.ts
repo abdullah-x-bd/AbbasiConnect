@@ -593,7 +593,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
   });
 
   // This short, private JPEG is generated on demand from the saved database JSON.
-  // The phone number, PIN, and verification status are never included.
+  // Include account contact only in the exported JPEG. PIN and verification status stay private.
   app.get("/biodata",async(request,reply)=>{
     const acc=await requireAccount(request);
     if(!acc)return reply.code(401).send({error:"Please log in first"});
@@ -605,7 +605,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
     if(profile.registration?.profile_for==="relative"&&!profile.registration.candidate_consent_confirmed)
       return reply.code(403).send({error:"Please confirm that the candidate agreed to this biodata"});
     try{
-      const jpeg=await renderBiodataJpeg(profile,acc.registration.photoData);
+      const jpeg=await renderBiodataJpeg(profile,acc.registration.photoData,acc.phone);
       return {mimeType:"image/jpeg",filename:"ABC-Biodata.jpg",
         width:BIODATA_WIDTH,height:BIODATA_HEIGHT,base64:jpeg.toString("base64")};
     }catch(error){
