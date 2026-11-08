@@ -15,18 +15,28 @@ async function req(path,method="GET",body,status=200){
 }
 try{
   assert.equal((await req("/abc/health")).ok,true);
+  assert.equal((await req("/abc/phone/check","POST",{phone})).registered,false);
   const a=await req("/abc/signup","POST",{phone,pin},201);created=true;token=a.token;
+  assert.equal((await req("/abc/phone/check","POST",{phone})).registered,true);
   assert.equal(a.member.phoneVerified,false);
   assert.equal(a.session.phase,"COLLECTING");
   console.log("PASS immediate PIN registration");
   await req("/abc/signup","POST",{phone,pin},409);
-  await req("/abc/choice","POST",{field:"looking_for",value:"bride"});
-  const ch=await req("/abc/choice","POST",{field:"profile_for",value:"self"});
+  await req("/abc/choice","POST",{field:"preferred_language",value:"roman"});
+  const seeking=await req("/abc/choice","POST",{field:"looking_for",value:"bride"});
+  assert.equal(seeking.session.profile.candidate.gender,"male");
+  assert.equal(seeking.session.fieldStates["candidate.gender"],"answered");
+  await req("/abc/choice","POST",{field:"profile_for",value:"self"});
+  const ch=await req("/abc/choice","POST",{field:"marital_status",value:"never married"});
+  assert.equal(ch.session.profile.candidate.marital_status,"never married");
+  assert.equal(ch.session.fieldStates["candidate.marital_status"],"answered");
   assert.equal(ch.session.currentQuestion,"candidate.full_name");
   assert.ok(ch.session.messages[0].text.includes("poora naam"));
-  assert.ok(ch.session.messages[0].text.includes("age in years"));
-  console.log("PASS first grouped question asks name, age and gender together");
-  console.log("PASS minimal setup and bilingual question");
+  assert.ok(ch.session.messages[0].text.includes("umr"));
+  assert.ok(!ch.session.messages[0].text.includes("gender"));
+  assert.ok(!ch.session.messages[0].text.includes("\n"));
+  console.log("PASS early language/role/self/marital choices with inferred gender");
+  console.log("PASS single-language grouped question without redundant gender");
   const response=await req("/abc/reply","POST",{text:"My name is Sajid Alam. I am 29 years old and live in Delhi. My family is originally from Aligarh.",version:ch.session.version});
   assert.equal(response.session.profile.candidate.full_name,"Sajid Alam");
   const login=await req("/abc/login","POST",{phone,pin});
@@ -62,7 +72,10 @@ try{
   const downloaded=await req("/abc/photo");
   assert.ok(downloaded.dataUri.startsWith("data:image/png;base64,"));
   assert.deepEqual(Buffer.from(downloaded.dataUri.split(",")[1],"base64"),png);
-  assert.equal((await req("/abc/state")).session.profile.candidate.profile_photo.uploaded,true);
+  const withPhoto=(await req("/abc/state")).session.profile;
+  assert.equal(withPhoto.candidate.profile_photo.uploaded,true);
+  assert.equal(withPhoto.registration.photo_prompt_seen,true);
+  console.log("PASS photo prompt recorded without sending photo to LLM");
   console.log("PASS private optional image stored, restored and referenced in profile JSON");
 
 

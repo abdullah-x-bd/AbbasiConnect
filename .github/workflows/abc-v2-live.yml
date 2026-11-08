@@ -24,13 +24,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Wait for the NEW optional-details and biodata endpoints
+      - name: Wait for v1.4 early phone-check endpoint
         run: |
           for i in $(seq 1 45); do
             status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 25 \
-              https://abbasiconnect-api.onrender.com/abc/enrichment || true)
-            if [ "$status" = "401" ]; then
-              echo "ABC biodata/enrichment deployment is available"
+              -X POST -H 'content-type: application/json' -d '{"phone":"+9991234567890"}' \
+              https://abbasiconnect-api.onrender.com/abc/phone/check || true)
+            if [ "$status" = "200" ]; then
+              echo "ABC v1.4 onboarding deployment is available"
               exit 0
             fi
             sleep 10
@@ -43,7 +44,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ABC-v1.2-Biodata-Sample
+          name: ABC-v1.4-Biodata-Sample
           path: abc-jpeg-evidence/
           if-no-files-found: warn
           retention-days: 14
