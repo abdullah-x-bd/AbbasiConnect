@@ -273,13 +273,15 @@ function App(){
       await api("/abc/photo",{method:"POST",body:{base64:item.base64,mime}});
       setImage("data:"+mime+";base64,"+item.base64);
       setPhotoSaved(true);
-      await refreshSession();
+      const state=await api<{session:Session}>("/abc/state");
+      setSession(state.session);
     });
   }
   async function deletePhoto(){
     if(PREVIEW){setImage(null);setPhotoSaved(false);return;}
     await task(async()=>{await api("/abc/photo",{method:"DELETE"});
-      setImage(null);setPhotoSaved(false);await refreshSession();});
+      setImage(null);setPhotoSaved(false);
+      const state=await api<{session:Session}>("/abc/state");setSession(state.session);});
   }
   async function openPhoto(){
     if(PREVIEW)return;
@@ -413,7 +415,7 @@ function App(){
       if(editPath==="candidate.languages")v=JSON.parse(editValue);
       const d=await api<{session:Session}>("/abc/edit",{method:"POST",body:{path:editPath,value:v}});
       setEditPath("");setEditValue("");goState(d.session);
-      if(d.session.phase==="REVIEW")setScreen("review");
+      if(d.session.phase==="REVIEW"||d.session.phase==="COMPLETE")setScreen("review");
     });
   }
   function edit(path:string){
