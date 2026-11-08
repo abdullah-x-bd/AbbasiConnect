@@ -28,6 +28,8 @@ SCREENS=[
     ("15-interests","Interests inbox"),
     ("16-profile","My profile"),
     ("17-paused","Saved conversation and resume"),
+    ("18-biodata","JPEG biodata preview"),
+    ("19-more-details","Optional enrichment editor"),
 ]
 def adb(*args,timeout=45):
     p=subprocess.run(["adb",*args],capture_output=True,text=True,timeout=timeout)
@@ -46,7 +48,7 @@ EXPECTED=[
  "Choose a 4-digit PIN","Welcome back","Looking for a","Whose profile is this",
  "How are you related","Conversation","Photo saved","Listening",
  "We have all the details","Your answers","Explore / Rishte",
- "Interests","My profile","Your answers are saved"
+ "Interests","My profile","Your answers are saved","Your Bio Data","More details"
 ]
 def verify_screen(i):
     expected=EXPECTED[i]
