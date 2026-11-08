@@ -1,7 +1,7 @@
 import React,{useEffect,useRef,useState} from "react";
 import {
   ActivityIndicator,Alert,Image,Keyboard,KeyboardAvoidingView,Platform,Pressable,
-  ScrollView,StyleSheet,Text,TextInput,View,type ScrollViewInstance
+  ScrollView,StatusBar,StyleSheet,Text,TextInput,View,type ScrollViewInstance
 } from "react-native";
 import {SafeAreaProvider,SafeAreaView} from "react-native-safe-area-context";
 import {AudioModule,RecordingPresets,setAudioModeAsync,useAudioRecorder} from "expo-audio";
@@ -920,7 +920,9 @@ function App(){
     if(screen==="profile")return profileScreen();
     return null;
   }
-  return <SafeAreaProvider><SafeAreaView style={st.page}>
+  return <SafeAreaProvider>
+    <StatusBar barStyle="dark-content" backgroundColor={T.paper} translucent={false}/>
+    <SafeAreaView style={st.page}>
     {content()}
     {error?<View style={styles.error}>
       <Text style={{color:T.danger,flex:1,fontSize:13}}>{error}</Text>
@@ -931,7 +933,8 @@ function App(){
     {PREVIEW?<Pressable accessibilityRole="button" accessibilityLabel="Next preview screen"
       onPress={previewNext} style={{position:"absolute",right:0,top:98,width:72,height:72,opacity:.01}}>
       <View style={{flex:1}}/></Pressable>:null}
-  </SafeAreaView></SafeAreaProvider>;
+    </SafeAreaView>
+  </SafeAreaProvider>;
 }
 const styles=StyleSheet.create({
   header:{height:66,backgroundColor:T.paper,paddingHorizontal:20,flexDirection:"row",alignItems:"center",
