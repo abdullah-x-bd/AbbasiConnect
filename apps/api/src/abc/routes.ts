@@ -8,7 +8,7 @@ import {
   missingRequired,allFieldsResolved,percentComplete,safeHistory,localized,inferCandidateGender,
   type ChatMessage,type FieldStates,type Phase,type Profile,type SessionData,type Lang
 } from "./fields.js";
-import { extract,interview,openRouterConfigured,transcribeAudio } from "./llm.js";
+import { extract,interview,openRouterConfigured,transcribeAudio,cleanProfileValue } from "./llm.js";
 import { renderBiodataJpeg,BIODATA_WIDTH,BIODATA_HEIGHT } from "./biodata.js";
 
 const PHONE=/^\+[1-9]\d{7,14}$/;
@@ -188,13 +188,18 @@ export async function registerAbcRoutes(app:FastifyInstance){
     };
     if(field in allowed&&!allowed[field].includes(value))return reply.code(400).send({error:"Invalid selection"});
     if(field==="registrant_relationship_to_candidate"&&(typeof value!=="string"||value.trim().length<2))return reply.code(400).send({error:"Describe your relationship"});
+    let normalizedChoice=value;
+    if(field==="registrant_relationship_to_candidate"){
+      try{normalizedChoice=(await cleanProfileValue(value,"script","Registrant relationship")).value as string;}
+      catch{return reply.code(503).send({error:"Please re-enter the relationship in Roman letters."});}
+    }
     if(field==="profile_for"&&!reg.looking_for)return reply.code(409).send({error:"Choose bride or groom first"});
     if(field==="candidate_consent_confirmed"&&reg.profile_for!=="relative")return reply.code(400).send({error:"Consent selection is for relative registrations"});
     if(field==="marital_status"){
       if(!reg.looking_for||!reg.profile_for)return reply.code(409).send({error:"Finish initial choices first"});
       p.candidate.marital_status=value;
       states["candidate.marital_status"]="answered";
-    }else reg[field]=value;
+    }else reg[field]=normalizedChoice;
     if(field==="looking_for"&&states["candidate.gender"]!=="answered"){
       p.candidate.gender=inferCandidateGender(value as "bride"|"groom");
       states["candidate.gender"]="answered";
@@ -234,6 +239,17 @@ export async function registerAbcRoutes(app:FastifyInstance){
         const kind=FIELD_MAP.get(change.path)?.kind;
         if(["text","education_description","gender","marital"].includes(kind||""))value=change.value_json;
         else continue;
+      }
+      try{
+        const normalized=await cleanProfileValue(value,"script",FIELD_MAP.get(change.path)?.label||change.path);
+        value=normalized.value;
+        if(normalized.uncertain&&(/\\.name$/.test(change.path)||change.path==="candidate.full_name")){
+          if(change.path===d.currentQuestion)issue="Please confirm the Roman spelling of this name";
+          continue;
+        }
+      }catch(error){
+        request.log.warn({reason:String(error).slice(0,160)},"ABC profile romanization failed");
+        return reply.code(503).send({error:"Please review this answer's Roman spelling and retry."});
       }
       const valid=normalizeField(change.path,value);
       if(!valid.ok){if(change.path===d.currentQuestion)issue=valid.error;continue;}
@@ -334,7 +350,10 @@ export async function registerAbcRoutes(app:FastifyInstance){
     if(!["COLLECTING","REVIEW","VERIFY_PHONE","COMPLETE"].includes(d.phase))return reply.code(409).send({error:"Profile cannot be edited now"});
     const body=z.object({path:z.string(),value:z.unknown()}).safeParse(request.body);
     if(!body.success)return reply.code(400).send({error:"Invalid edit"});
-    const valid=normalizeField(body.data.path,body.data.value);
+    let cleanedValue:unknown;
+    try{cleanedValue=(await cleanProfileValue(body.data.value,"script",FIELD_MAP.get(body.data.path)?.label||body.data.path)).value;}
+    catch{return reply.code(503).send({error:"Please check the Roman spelling and retry this edit."});}
+    const valid=normalizeField(body.data.path,cleanedValue);
     if(!valid.ok)return reply.code(400).send({error:valid.error});
     const profile=setPath(d.profile,body.data.path,valid.value),states={...d.fieldStates,[body.data.path]:valid.complete?"answered":"needs_clarification" as any};
     const next=nextQuestion(profile,states);
@@ -512,10 +531,17 @@ export async function registerAbcRoutes(app:FastifyInstance){
     return {id:updated.id,status:updated.status};
   });
 
-  // A member can remove their own ABC registration and all dependent private data.
+  // A fresh PIN is required before deleting the account and all its data.
+  // Cascading relations remove photos, interests and SMS challenges.
   app.delete("/account",async(request,reply)=>{
     const acc=await requireAccount(request);
     if(!acc)return reply.code(401).send({error:"ABC sign-in required"});
+    const body=z.object({pin:z.string().regex(PIN)}).safeParse(request.body);
+    if(!body.success)return reply.code(400).send({error:"Enter your account PIN to delete your profile"});
+    if(!throttle("abc-delete:"+acc.id,6,15*60*1000))
+      return reply.code(429).send({error:"Too many deletion attempts. Please try later."});
+    if(!await bcrypt.compare(body.data.pin,acc.pinHash))
+      return reply.code(403).send({error:"The PIN is incorrect. Your account has not been deleted."});
     await prisma.abcRegistration.delete({where:{id:acc.registrationId}});
     return {deleted:true};
   });
@@ -594,6 +620,28 @@ export async function registerAbcRoutes(app:FastifyInstance){
     const options=FIELDS.filter(f=>!f.required).map(f=>({path:f.path,label:f.label,kind:f.kind}));
     return {fields:options,profile:acc.registration.profile};
   });
+  // Prepare the draft without saving. The member reviews the cleaned result first.
+  app.post("/enrichment/prepare",async(request,reply)=>{
+    const acc=await requireAccount(request);
+    if(!acc)return reply.code(401).send({error:"ABC login required"});
+    if(!["COMPLETE","REVIEW"].includes(acc.registration.phase))
+      return reply.code(409).send({error:"Finish the basic questions first"});
+    const body=z.object({path:z.string().max(150),text:z.string().trim().min(1).max(1000)}).safeParse(request.body);
+    if(!body.success)return reply.code(400).send({error:"Enter a short optional detail"});
+    const def=FIELD_MAP.get(body.data.path);
+    if(!def||def.required)return reply.code(400).send({error:"This optional field is not allowed"});
+    try{
+      const cleaned=await cleanProfileValue(body.data.text,"polish",def.label);
+      const value=String(cleaned.value);
+      const structured=def.kind==="list"?value.split(",").map(x=>x.trim()).filter(Boolean):value;
+      const valid=normalizeField(def.path,structured);
+      if(!valid.ok)return reply.code(400).send({error:valid.error});
+      return {text:value,uncertain:cleaned.uncertain,valid:true};
+    }catch(error){
+      request.log.warn({reason:String(error).slice(0,160)},"ABC optional detail cleanup failed");
+      return reply.code(503).send({error:"We could not clean this detail yet. Nothing was saved."});
+    }
+  });
   app.post("/enrichment",async(request,reply)=>{
     const acc=await requireAccount(request);
     if(!acc)return reply.code(401).send({error:"Please log in first"});
@@ -605,7 +653,13 @@ export async function registerAbcRoutes(app:FastifyInstance){
       return reply.code(409).send({error:"Profile has changed. Refresh before editing."});
     const def=FIELD_MAP.get(body.data.path);
     if(!def||def.required)return reply.code(400).send({error:"Only optional fields can be added here"});
-    const valid=normalizeField(body.data.path,body.data.value);
+    let cleanedValue:unknown;
+    try{cleanedValue=(await cleanProfileValue(body.data.value,"polish",def.label)).value;}
+    catch(error){
+      request.log.warn({reason:String(error).slice(0,160)},"ABC enrichment save cleanup failed");
+      return reply.code(503).send({error:"The optional detail could not be cleaned. Nothing was saved."});
+    }
+    const valid=normalizeField(body.data.path,cleanedValue);
     if(!valid.ok)return reply.code(400).send({error:valid.error});
     const profile=setPath(acc.registration.profile as Profile,body.data.path,valid.value);
     const states:FieldStates={...(acc.registration.fieldStates as FieldStates),
@@ -616,11 +670,17 @@ export async function registerAbcRoutes(app:FastifyInstance){
 
   app.post("/audio/transcribe",async(request,reply)=>{
     const d=await requireDraft(request);if(!d)return authError(reply);
-    if(d.phase!=="COLLECTING")return reply.code(409).send({error:"Speech input is available during the interview"});
+    if(!["COLLECTING","REVIEW","COMPLETE"].includes(d.phase))return reply.code(409).send({error:"Speech input is unavailable right now"});
     const body=z.object({data:z.string().max(1200000),format:z.enum(["m4a","wav","mp3"])}).safeParse(request.body);
     if(!body.success)return reply.code(400).send({error:"Invalid audio clip"});
     if(!throttle("abc-audio:"+d.id,12,60*60*1000))return reply.code(429).send({error:"Audio limit reached"});
-    try{return {text:await transcribeAudio(body.data.data,body.data.format)};}
-    catch{return reply.code(503).send({error:"Speech transcription temporarily unavailable. Please type your answer."});}
+    try{
+      const transcript=await transcribeAudio(body.data.data,body.data.format);
+      const normalized=await cleanProfileValue(transcript,"speech","Dictated ABC answer");
+      return {text:String(normalized.value),uncertain:normalized.uncertain};
+    }catch(error){
+      request.log.warn({reason:String(error).slice(0,160)},"ABC cleaned transcription failed");
+      return reply.code(503).send({error:"Speech cleanup is unavailable. Please type your answer."});
+    }
   });
 }
