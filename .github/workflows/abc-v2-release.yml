@@ -1,4 +1,4 @@
-name: Publish ABC v1.7.0 direct APK
+name: Publish ABC v1.7.1 direct APK
 
 on:
   workflow_run:
@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 25
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: abc-bahishti-v1.7.0
+      TAG: abc-bahishti-v1.7.1
     steps:
       - uses: actions/checkout@v4
       - name: Download APK from this exact successful Android build
@@ -34,15 +34,15 @@ jobs:
           test -n "$RUN_ID"
           gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name ABC-Bahishti-Android-APK --dir abc-apk
           test -s abc-apk/app-release.apk
-          cp abc-apk/app-release.apk ABC-Bahishti-Connections-v1.7.0.apk
-          file ABC-Bahishti-Connections-v1.7.0.apk
-          ls -lh ABC-Bahishti-Connections-v1.7.0.apk
+          cp abc-apk/app-release.apk ABC-Bahishti-Connections-v1.7.1.apk
+          file ABC-Bahishti-Connections-v1.7.1.apk
+          ls -lh ABC-Bahishti-Connections-v1.7.1.apk
       - name: Publish direct-install APK
         run: |
           set -euo pipefail
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" ABC-Bahishti-Connections-v1.7.0.apk --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$TAG" ABC-Bahishti-Connections-v1.7.1.apk --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$TAG" ABC-Bahishti-Connections-v1.7.0.apk --repo "$GITHUB_REPOSITORY" --target main --title "ABC Bahishti Connections v1.7.0" --notes "ABC v1.7.0: optional GPT-Live full-duplex Voice Call before onboarding, with the same backend seven-group questions and saved JSON. Chat is text-only with voice-to-text; tap-to-speak TTS is removed. Includes voice mute/end/switch controls, progress saving, and existing ivory-green ABC styling." --latest=false
+            gh release create "$TAG" ABC-Bahishti-Connections-v1.7.1.apk --repo "$GITHUB_REPOSITORY" --target main --title "ABC Bahishti Connections v1.7.1" --notes "ABC v1.7.1: voice onboarding ends at four minutes, or after 30 seconds of silence (reminder at 20 seconds), and five unrelated replies force a return to Chat. A transcript watchdog prevents model distractions from bypassing backend validation. Genuine repeat requests are exempt. Saved answers, ivory design and chat remain intact." --latest=false
           fi
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets

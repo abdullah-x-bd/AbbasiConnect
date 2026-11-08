@@ -2,7 +2,7 @@ name: ABC v2 every-screen native screenshots
 
 on:
   push:
-    branches: ["feature/abc-short-onboarding-biodata", "feature/abc-onboarding-surgical-v14", "feature/abc-roman-cleanup-enrichment-delete-v15", "feature/abc-ivory-forest-brand-v16", "feature/abc-auto-cheap-voice-cleanup-v161", "feature/abc-gpt-live-voice-onboarding-v17", main]
+    branches: ["feature/abc-short-onboarding-biodata", "feature/abc-onboarding-surgical-v14", "feature/abc-roman-cleanup-enrichment-delete-v15", "feature/abc-ivory-forest-brand-v16", "feature/abc-auto-cheap-voice-cleanup-v161", "feature/abc-gpt-live-voice-onboarding-v17", "feature/abc-voice-guardrails-v171", main]
     paths:
       - "apps/bahishti/**"
       - ".github/workflows/abc-v2-screenshots.yml"
