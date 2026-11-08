@@ -2,7 +2,7 @@ name: ABC v2 every-screen native screenshots
 
 on:
   push:
-    branches: ["feature/abc-minimal-v2",main]
+    branches: ["feature/abc-short-onboarding-biodata",main]
     paths:
       - "apps/bahishti/**"
       - ".github/workflows/abc-v2-screenshots.yml"
