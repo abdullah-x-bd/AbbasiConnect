@@ -111,7 +111,7 @@ export function EnrichmentScreen({profile,busy,selected,value,setValue,select,on
           <Pressable accessibilityRole="button" accessibilityLabel={"Edit "+field.en}
             onPress={()=>select(field)} style={{flexDirection:"row",alignItems:"center",gap:9}}>
             <View style={{flex:1}}>
-              <Text style={{fontSize:16,color:T.ink,fontWeight:"650"}}>{field.en}</Text>
+              <Text style={{fontSize:16,color:T.ink,fontWeight:"600"}}>{field.en}</Text>
               <Text style={{fontSize:13,color:T.muted,marginTop:2}}>{field.roman}</Text>
               {val(profile,field.path)?<Text numberOfLines={2}
                 style={{fontSize:13,color:T.accent,marginTop:5}}>{val(profile,field.path)}</Text>:null}
