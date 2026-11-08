@@ -9,6 +9,7 @@ import {
   type ChatMessage,type FieldStates,type Phase,type Profile,type SessionData,type Lang
 } from "./fields.js";
 import { extract,interview,openRouterConfigured,transcribeAudio } from "./llm.js";
+import { renderBiodataJpeg,BIODATA_WIDTH,BIODATA_HEIGHT } from "./biodata.js";
 
 const PHONE=/^\+[1-9]\d{7,14}$/;
 const VERIFY_REGEX=/\bABC\s+VERIFY\s+(\d{6})\b/i;
@@ -509,6 +510,54 @@ export async function registerAbcRoutes(app:FastifyInstance){
     const r=await prisma.abcRegistration.findUnique({where:{id},select:{visible:true,phase:true,photoData:true}});
     if(!r||!r.visible||r.phase!=="COMPLETE")return reply.code(404).send({error:"Photo unavailable"});
     return {dataUri:r.photoData||null};
+  });
+
+  // This short, private JPEG is generated on demand from the saved database JSON.
+  // The phone number, PIN, and verification status are never included.
+  app.get("/biodata",async(request,reply)=>{
+    const acc=await requireAccount(request);
+    if(!acc)return reply.code(401).send({error:"Please log in first"});
+    if(!["REVIEW","COMPLETE"].includes(acc.registration.phase))
+      return reply.code(409).send({error:"Finish the basic interview before downloading biodata"});
+    if(!throttle("abc-biodata:"+acc.id,10,60*1000))
+      return reply.code(429).send({error:"Please wait before generating another biodata"});
+    const profile=acc.registration.profile as Profile;
+    if(profile.registration?.profile_for==="relative"&&!profile.registration.candidate_consent_confirmed)
+      return reply.code(403).send({error:"Please confirm that the candidate agreed to this biodata"});
+    try{
+      const jpeg=await renderBiodataJpeg(profile,acc.registration.photoData);
+      return {mimeType:"image/jpeg",filename:"ABC-Biodata.jpg",
+        width:BIODATA_WIDTH,height:BIODATA_HEIGHT,base64:jpeg.toString("base64")};
+    }catch(error){
+      request.log.error({reason:String(error).slice(0,200)},"ABC biodata render error");
+      return reply.code(503).send({error:"Biodata is temporarily unavailable. Please try again."});
+    }
+  });
+  // The extra details are entirely voluntary and cannot undo onboarding.
+  app.get("/enrichment",async(request,reply)=>{
+    const acc=await requireAccount(request);
+    if(!acc)return reply.code(401).send({error:"Please log in first"});
+    const options=FIELDS.filter(f=>!f.required).map(f=>({path:f.path,label:f.label,kind:f.kind}));
+    return {fields:options,profile:acc.registration.profile};
+  });
+  app.post("/enrichment",async(request,reply)=>{
+    const acc=await requireAccount(request);
+    if(!acc)return reply.code(401).send({error:"Please log in first"});
+    if(!["COMPLETE","REVIEW"].includes(acc.registration.phase))
+      return reply.code(409).send({error:"Complete the basic questions first"});
+    const body=z.object({path:z.string().max(150),value:z.unknown(),version:z.number().int().nonnegative()}).safeParse(request.body);
+    if(!body.success)return reply.code(400).send({error:"Invalid optional detail"});
+    if(body.data.version!==acc.registration.version)
+      return reply.code(409).send({error:"Profile has changed. Refresh before editing."});
+    const def=FIELD_MAP.get(body.data.path);
+    if(!def||def.required)return reply.code(400).send({error:"Only optional fields can be added here"});
+    const valid=normalizeField(body.data.path,body.data.value);
+    if(!valid.ok)return reply.code(400).send({error:valid.error});
+    const profile=setPath(acc.registration.profile as Profile,body.data.path,valid.value);
+    const states={...(acc.registration.fieldStates as FieldStates),
+      [body.data.path]:valid.complete?"answered":"needs_clarification"};
+    const saved=await store(readDraft(acc.registration),{profile,fieldStates:states});
+    return {session:client(saved)};
   });
 
   app.post("/audio/transcribe",async(request,reply)=>{
