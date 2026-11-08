@@ -465,7 +465,9 @@ function App(){
   }
   function choicePage(title:string,roman:string,options:{en:string;roman:string;value:string}[],field:string){
     return <View style={st.page}>
-      {header("ABC",()=>setScreen(field==="looking_for"?"pinSignup":field==="profile_for"?"purpose":"for"))}
+      {header("ABC",()=>setScreen(field==="preferred_language"?"welcome":
+        field==="looking_for"?"language":field==="profile_for"?"purpose":
+        field==="marital_status"?"for":"for"))}
       <View style={[st.inner,{justifyContent:"center",paddingBottom:84}]}>
         <H en={title} roman={roman}/>
         {options.map(o=><View key={o.value} style={{marginBottom:14}}>
@@ -659,9 +661,19 @@ function App(){
         <H en="Your mobile number" roman="Apna mobile number batayein"/>
         <Field label="Phone number" roman="Mobile number" value={phone} numeric onChangeText={setPhone}
           placeholder="+91 98765 43210" autoComplete="tel"/>
-        <Btn en="Continue" roman="Aage badhein" disabled={phone.replace(/\D/g,"").length<10}
-          onPress={()=>setScreen("verify")}/>
+        <Btn en="Continue" roman="Aage badhein" disabled={busy||phone.replace(/\D/g,"").length<10}
+          onPress={()=>void checkPhone()}/>
       </View></View>;
+    if(screen==="registered")return <View style={st.page}>
+      {header("Already registered",()=>setScreen("signupPhone"),"Pehle se account hai")}
+      <View style={[st.inner,{justifyContent:"center",paddingBottom:85}]}>
+        <H en="This number is already registered." roman="Is number se account pehle se bana hua hai."/>
+        <Text style={[styles.phoneText,{textAlign:"center",marginBottom:28}]}>{phone}</Text>
+        <Btn en="Log in instead" roman="Login karein" onPress={()=>setScreen("signin")}/>
+        <View style={{height:12}}/>
+        <Btn en="Use another number" roman="Doosra number dein" secondary onPress={()=>setScreen("signupPhone")}/>
+      </View>
+    </View>;
     if(screen==="verify")return <View style={st.page}>
       {header("Verify number",()=>setScreen("signupPhone"),"Number ki tasdeeq")}
       <View style={[st.inner,{justifyContent:"center",paddingBottom:85}]}>
@@ -699,6 +711,10 @@ function App(){
         <Field label="Your PIN" roman="Apna PIN" value={pin} numeric secure onChangeText={setPin} maxLength={6}/>
         <Btn en="Log in" roman="Login karein" disabled={busy||pin.length<4||!phone.trim()} onPress={()=>void signin()}/>
       </View></View>;
+    if(screen==="language")return choicePage("How should we talk?","Hum kis zubaan mein baat karein?",[
+      {en:"Hinglish / Hindustani",roman:"Aapka naam kya hai? (default)",value:"roman"},
+      {en:"English",roman:"What is your name?",value:"en"}
+    ],"preferred_language");
     if(screen==="purpose")return choicePage("Looking for a…","Aap kise dhoond rahe hain?",[
       {en:"Bride",roman:"Dulhan",value:"bride"},
       {en:"Groom",roman:"Dulha",value:"groom"}
@@ -720,7 +736,26 @@ function App(){
         <Btn en="Continue" roman="Aage badhein" disabled={!relationship.trim()}
           onPress={()=>void choose("registrant_relationship_to_candidate",relationship.trim())}/>
       </View></View>;
-    if(screen==="chat"||screen==="chatPhoto"||screen==="recording")return chatScreen();
+    if(screen==="marital")return choicePage("Marital status","Shaadi ki haalat kya hai?",[
+      {en:"Never married",roman:"Pehle shaadi nahi hui",value:"never married"},
+      {en:"Divorced",roman:"Talaaq-shuda",value:"divorced"},
+      {en:"Widowed",roman:"Bewa / Bewah",value:"widowed"},
+      {en:"Separated",roman:"Alag rehte hain",value:"separated"},
+      {en:"Other",roman:"Koi aur",value:"other"}
+    ],"marital_status");
+    if(screen==="chat")return chatScreen();
+    if(screen==="photoOffer")return <View style={st.page}>
+      {header("Profile photo",()=>setScreen("review"),"Tasveer")}
+      <View style={[st.inner,{justifyContent:"center",paddingBottom:80}]}>
+        <H en="Would you like to add a photo?" roman="Apni tasveer lagana chahenge?" center/>
+        <Text style={[st.sub,{textAlign:"center",marginBottom:26}]}>
+          Optional. You can add or change it later. / Yeh zaroori nahi hai.
+        </Text>
+        <Btn en="Add photo" roman="Tasveer lagayein" onPress={()=>void pickPhoto()} disabled={busy}/>
+        <View style={{height:12}}/>
+        <Btn en="Skip for now" roman="Abhi rehne dein" secondary onPress={()=>void skipPhotoPrompt()} disabled={busy}/>
+      </View>
+    </View>;
     if(screen==="paused")return <View style={st.page}>
       {header("Paused",()=>setScreen("welcome"),"Thoda ruk gaye")}
       <View style={[st.inner,{justifyContent:"center",paddingBottom:75}]}>
