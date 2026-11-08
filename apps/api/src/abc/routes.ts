@@ -10,6 +10,10 @@ import {
 } from "./fields.js";
 import { extract,interview,openRouterConfigured,transcribeAudio,cleanProfileValue } from "./llm.js";
 import { renderBiodataJpeg,BIODATA_WIDTH,BIODATA_HEIGHT } from "./biodata.js";
+import {
+  VOICE_MAX_DURATION_MS,VOICE_STARTED_KEY,VOICE_ALLOWED_OFF_TOPIC,
+  unrelatedCount,countVoiceReply,voiceCallExpired
+} from "./voice-policy.js";
 
 const PHONE=/^\+[1-9]\d{7,14}$/;
 const VERIFY_REGEX=/\bABC\s+VERIFY\s+(\d{6})\b/i;
@@ -182,6 +186,8 @@ export async function registerAbcRoutes(app:FastifyInstance){
     if(draft.phase!=="COLLECTING"||!setupComplete(draft.profile)||
       draft.profile.registration.onboarding_mode!=="voice")
       return reply.code(409).send({error:"Choose Voice Call during onboarding first"});
+    if(unrelatedCount(draft.declines)>VOICE_ALLOWED_OFF_TOPIC)
+      return reply.code(409).send({error:"Voice Call ended after five unrelated replies. Continue in Chat."});
     const body=z.object({sdp:z.string().min(30).max(24000)}).safeParse(request.body);
     if(!body.success||!/^v=0\r?\n/m.test(body.data.sdp))
       return reply.code(400).send({error:"Invalid audio connection offer"});
@@ -196,7 +202,11 @@ export async function registerAbcRoutes(app:FastifyInstance){
     const instructions=[
       "You are the spoken interviewer for ABC Abbasi Bahishti Connections, a matrimonial profile application.",
       lang==="en"?"Speak clear, natural Indian English.":"Speak conversational Hindustani naturally, mixing familiar Hindi, Urdu and English. Do not speak code, field names or JSON.",
-      "Follow the registered ABC questionnaire exactly. You are the VOICE and LISTENING interface; the trusted ABC backend makes every decision and saves profile facts.",
+      "Follow the registered ABC questionnaire exactly. You are ONLY the VOICE and LISTENING interface; the trusted ABC backend makes every decision and saves profile facts.",
+      "Keep every spoken reply brief: at most two short sentences, ideally one question. Never speak more than 35 words at once.",
+      "Never entertain off-topic requests, tell jokes or stories, answer unrelated questions or discuss the AI, politics, news, philosophy, or general knowledge. Politely redirect in one short sentence and repeat the current ABC question.",
+      "Every full user turn, INCLUDING off-topic distractions, MUST be delegated to the ABC backend for classification. The backend, not you, counts unrelated turns. On the fifth such attempt the call must end. Do not debate the limit.",
+      "The entire interview is capped at four minutes. Extended silence closes the call. Do not continue speaking to fill silence, and never ask the same question repeatedly without a user answer.",
       "On connecting, ask ONLY the following CURRENT QUESTION, then listen: "+initial,
       "After EVERY complete user answer, delegate to the client backend for validation and the next question. Never decide which information has been saved yourself.",
       "Wait for the backend update before asking a new question. Speak the next saved backend question, using short gentle wording.",
@@ -223,7 +233,15 @@ export async function registerAbcRoutes(app:FastifyInstance){
         request.log.warn({status:response.status,reason:String(payload?.error?.message||"live unavailable").slice(0,250)},"ABC voice connection refused");
         return reply.code(503).send({error:"Voice connection unavailable. Try again or choose Chat."});
       }
-      return {sessionId:payload.session.id,answer:payload.transport.sdp};
+      // Starting a new call starts the hard deadline on the server as well.
+      // Preserve the accumulated off-topic count across resumed calls.
+      try{
+        const saved=await store(draft,{declines:{...draft.declines,[VOICE_STARTED_KEY]:Date.now()}});
+        return {sessionId:payload.session.id,answer:payload.transport.sdp,
+          session:client(saved),maxDurationMs:VOICE_MAX_DURATION_MS};
+      }catch{
+        return reply.code(409).send({error:"Your profile changed while connecting. Please retry the call."});
+      }
     }catch(e){
       request.log.warn({reason:String(e).slice(0,160)},"ABC voice connection error");
       return reply.code(503).send({error:"Voice connection timed out. Use Chat or try again."});
@@ -274,6 +292,9 @@ export async function registerAbcRoutes(app:FastifyInstance){
     const body=z.object({text:z.string().trim().min(1).max(1500),version:z.number().int().nonnegative()}).safeParse(request.body);
     if(!body.success)return reply.code(400).send({error:"Enter an answer (up to 1500 characters)"});
     if(body.data.version!==d.version)return reply.code(409).send({error:"This interview has changed. Refresh and retry."});
+    if(d.profile.registration.onboarding_mode==="voice"&&voiceCallExpired(d.declines))
+      return reply.code(409).send({error:"The four-minute voice call has ended. Continue in Chat.",
+        voiceTermination:"time_limit"});
     if(d.messages.length>=MAX_MESSAGES)return reply.code(429).send({error:"Interview limit reached. Please contact support."});
     if(!throttle("abc-reply:"+d.id,14,60*1000))return reply.code(429).send({error:"Too many replies. Please wait a moment."});
     const lang=getLanguage(d.profile),userText=body.data.text;
@@ -283,7 +304,16 @@ export async function registerAbcRoutes(app:FastifyInstance){
     catch(e){request.log.warn({type:"abc_extraction",reason:String(e).slice(0,150)},"ABC AI unavailable");return reply.code(503).send({error:"ABC interview is temporarily unavailable. Your last answer was not lost; please retry."});}
     let profile=d.profile;
     const states={...d.fieldStates};
-    const declines={...d.declines};
+    let declines={...d.declines};
+    const isVoice=d.profile.registration.onboarding_mode==="voice";
+    let voiceDistractionCount=isVoice?unrelatedCount(declines):0;
+    let endForDistractions=false;
+    if(isVoice){
+      const strike=countVoiceReply(declines,extracted);
+      declines=strike.next;
+      voiceDistractionCount=strike.count;
+      endForDistractions=strike.end;
+    }
     let count=0,issue="";
     for(const change of extracted.changes){
       if(!FIELD_MAP.has(change.path)||change.confidence==="LOW")continue;
@@ -362,10 +392,22 @@ export async function registerAbcRoutes(app:FastifyInstance){
         message=talk.message;
       }
     }else message="Your answers are saved.";
+    if(endForDistractions){
+      // The fifth unrelated reply terminates voice mode, without deleting any
+      // correctly extracted answer, or modifying the current questionnaire.
+      profile=structuredClone(profile);
+      profile.registration.onboarding_mode="chat";
+      message=localized(lang,
+        "Voice Call ended after five unrelated replies. Your answers are saved. Continue in Chat.",
+        "Paanch baar topic badalne par voice call khatam ho gayi. Jawaab save hain. Chat se jaari rakhein.",
+        "پانچ غیر متعلقہ جوابوں کے بعد وائس کال ختم ہوئی۔ آپ کے جواب محفوظ ہیں۔ چیٹ سے جاری رکھیں۔",
+        "Paanch baar topic badalne par voice call khatam ho gayi. Jawaab save hain. Chat se jaari rakhein.");
+    }
     history.push(note("assistant",shortMessage(message),next?.path));
     try{
       const saved=await store(d,{phase,profile,fieldStates:states,declines,currentQuestion:next?.path??null,messages:safeHistory(history)});
-      return {session:client(saved),changesAccepted:count,classification:extracted.classification};
+      return {session:client(saved),changesAccepted:count,classification:extracted.classification,
+        ...(isVoice?{voiceDistractionCount,voiceTermination:endForDistractions?"off_topic_limit":null}:{})};
     }catch(e){return reply.code(409).send({error:String(e).slice(0,200)});}
   });
   app.post("/skip",async(request,reply)=>{

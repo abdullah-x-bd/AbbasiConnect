@@ -7,6 +7,7 @@ on:
       - "apps/api/src/abc/**"
       - "apps/api/tests/abc-fields.test.mjs"
       - "apps/api/tests/abc-cleanup.test.mjs"
+      - "apps/api/tests/abc-voice-policy.test.mjs"
       - "apps/api/tests/abc-biodata.test.mjs"
       - "apps/api/tests/abc-biodata-preview.mjs"
       - "apps/api/package.json"
@@ -43,6 +44,8 @@ jobs:
         run: node --import tsx --test apps/api/tests/abc-fields.test.mjs
       - name: Validate Gemini Roman-script cleanup with a mocked model
         run: node --import tsx --test apps/api/tests/abc-cleanup.test.mjs
+      - name: Test enforced voice time, silence and five-distraction rules
+        run: node --import tsx --test apps/api/tests/abc-voice-policy.test.mjs
       - name: Test shareable JPEG biodata rendering and photo security
         run: node --import tsx --test apps/api/tests/abc-biodata.test.mjs
       - name: Render actual WhatsApp 4:5 biodata preview
