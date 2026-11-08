@@ -21,7 +21,8 @@
     "react-native-safe-area-context": "~5.11.1",
     "expo-sharing": "~58.0.22",
     "react-native-webrtc": "124.0.8",
-    "@config-plugins/react-native-webrtc": "15.0.2"
+    "@config-plugins/react-native-webrtc": "15.0.2",
+    "expo-speech": "~58.0.3"
   },
   "devDependencies": {
     "typescript": "~5.9.3",
