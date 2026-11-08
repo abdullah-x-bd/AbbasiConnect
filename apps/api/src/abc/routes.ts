@@ -243,7 +243,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
       try{
         const normalized=await cleanProfileValue(value,"script",FIELD_MAP.get(change.path)?.label||change.path);
         value=normalized.value;
-        if(normalized.uncertain&&(/\\.name$/.test(change.path)||change.path==="candidate.full_name")){
+        if(normalized.uncertain&&(change.path.endsWith(".name")||change.path==="candidate.full_name")){
           if(change.path===d.currentQuestion)issue="Please confirm the Roman spelling of this name";
           continue;
         }
