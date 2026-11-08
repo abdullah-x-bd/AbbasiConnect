@@ -47,6 +47,9 @@ try{
   const spoken={text:"I completed a bachelor's degree in computer science at Aligarh Muslim University, and I work as a software engineer at Infosys.",
     version:ready.session.version,voiceTurnId:"abc_voice_multifield_00001"};
   const spokenResult=await req("/abc/reply","POST",spoken);
+  console.log("VOICE_MULTIFIELD_QA",JSON.stringify({classification:spokenResult.classification,
+    accepted:spokenResult.changesAccepted,educationSaved:Boolean(spokenResult.session.profile.candidate.education.highest_qualification),
+    occupationSaved:Boolean(spokenResult.session.profile.candidate.occupation.profession_or_role)}));
   assert.match(String(spokenResult.session.profile.candidate.education.highest_qualification||""),/bachelor/i);
   assert.match(String(spokenResult.session.profile.candidate.occupation.profession_or_role||""),/engineer/i);
   assert.equal(spokenResult.session.fieldStates["candidate.education.highest_qualification"],"answered");
