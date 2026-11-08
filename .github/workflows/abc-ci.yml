@@ -7,6 +7,7 @@ on:
       - "apps/api/src/abc/**"
       - "apps/api/tests/abc-fields.test.mjs"
       - "apps/api/tests/abc-biodata.test.mjs"
+      - "apps/api/tests/abc-biodata-preview.mjs"
       - "apps/api/package.json"
       - "apps/api/prisma/schema.prisma"
       - "apps/api/src/server-v2.ts"
@@ -41,5 +42,14 @@ jobs:
         run: node --import tsx --test apps/api/tests/abc-fields.test.mjs
       - name: Test shareable JPEG biodata rendering and photo security
         run: node --import tsx --test apps/api/tests/abc-biodata.test.mjs
+      - name: Render actual WhatsApp 4:5 biodata preview
+        run: node --import tsx apps/api/tests/abc-biodata-preview.mjs
+      - name: Retain generated 1080x1350 JPEG for visual audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: ABC-WhatsApp-Biodata-v1.3-Preview
+          path: abc-biodata-preview/ABC-Biodata-v1.3-Sample.jpg
+          if-no-files-found: error
+          retention-days: 30
       - name: Typecheck ABC Android app
         run: npm run typecheck -w @abbasiconnect/bahishti
