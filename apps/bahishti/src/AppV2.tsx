@@ -1,6 +1,6 @@
 import React,{useEffect,useRef,useState} from "react";
 import {
-  ActivityIndicator,Alert,Image,KeyboardAvoidingView,Platform,Pressable,
+  ActivityIndicator,Alert,Image,Keyboard,KeyboardAvoidingView,Platform,Pressable,
   ScrollView,StyleSheet,Text,TextInput,View,type ScrollViewInstance
 } from "react-native";
 import {SafeAreaProvider,SafeAreaView} from "react-native-safe-area-context";
@@ -14,13 +14,13 @@ import {api,clearTokens,restoreTokens,setMemberToken,
   type Session,type Account,type Candidate} from "./api";
 import {T,st,H,Btn,Field,Circle,Back,Hr} from "./minimal-ui";
 
-type Screen="loading"|"welcome"|"signupPhone"|"verify"|"pinSignup"|"signin"|
-  "purpose"|"for"|"relation"|"chat"|"chatPhoto"|"recording"|"done"|"review"|
+type Screen="loading"|"welcome"|"signupPhone"|"registered"|"verify"|"pinSignup"|"signin"|
+  "language"|"purpose"|"for"|"relation"|"marital"|"chat"|"photoOffer"|"done"|"review"|
   "explore"|"interests"|"profile"|"paused"|"biodata"|"enrich";
 type Interest={id:string;name:string;status:string;note?:string};
 const PREVIEW=process.env.EXPO_PUBLIC_ABC_PREVIEW==="1";
-const SCREENS:Screen[]=["welcome","signupPhone","verify","pinSignup","signin",
-  "purpose","for","relation","chat","chatPhoto","recording","done","review",
+const SCREENS:Screen[]=["welcome","signupPhone","registered","verify","pinSignup","signin",
+  "language","purpose","for","relation","marital","chat","photoOffer","done","review",
   "explore","interests","profile","paused","biodata","enrich"];
 const sampleProfile:any={
   schema_version:"1.0.0",
@@ -95,11 +95,14 @@ function formatValue(v:any):string{
 }
 function accountPage(phase:string,profile:any):Screen{
   if(phase==="COMPLETE")return "explore";
-  if(phase==="REVIEW"||phase==="VERIFY_PHONE"||phase==="SET_PIN")return "done";
+  if(phase==="REVIEW")return profile.registration?.photo_prompt_seen?"done":"photoOffer";
+  if(phase==="VERIFY_PHONE"||phase==="SET_PIN")return "done";
   if(phase==="BLOCKED_REQUIRED"||phase==="PAUSED")return "paused";
+  if(!profile.registration?.preferred_language)return "language";
   if(!profile.registration?.looking_for)return "purpose";
   if(!profile.registration?.profile_for)return "for";
   if(profile.registration.profile_for==="relative"&&!profile.registration.registrant_relationship_to_candidate)return "relation";
+  if(!profile.candidate?.marital_status)return "marital";
   return "chat";
 }
 function App(){
@@ -115,6 +118,7 @@ function App(){
   const [error,setError]=useState("");
   const [image,setImage]=useState<string|null>(null);
   const [photoSaved,setPhotoSaved]=useState(false);
+  const [recording,setRecording]=useState(false);
   const [consent,setConsent]=useState(false);
   const [city,setCity]=useState("");
   const [candidates,setCandidates]=useState<Candidate[]>([]);
@@ -131,7 +135,6 @@ function App(){
   const [biodataBack,setBiodataBack]=useState<"done"|"profile">("done");
   const scrollRef=useRef<ScrollViewInstance|null>(null);
   const recorder=useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const recording=screen==="recording";
 
   async function task(f:()=>Promise<void>){
     if(busy)return;
@@ -171,20 +174,34 @@ function App(){
   useEffect(()=>{
     if(!PREVIEW&&account&&(screen==="chat"||screen==="profile"))void openPhoto();
   },[screen,account?.member?.id]);
+  useEffect(()=>{
+    if(screen!=="chat")return;
+    const listener=Keyboard.addListener("keyboardDidShow",()=>
+      requestAnimationFrame(()=>scrollRef.current?.scrollToEnd({animated:true})));
+    return ()=>listener.remove();
+  },[screen]);
   function previewNext(){
     const i=(previewIndex+1)%SCREENS.length;
     setPreviewIndex(i);
-    if(SCREENS[i]==="chatPhoto")setPhotoSaved(true);
     setError("");setScreen(SCREENS[i]);
   }
-  function speech(answer:string){
+  function speakMessage(answer:string){
     if(PREVIEW)return;
-    Speech.stop();
-    Speech.speak(answer.replace(/\n/g,". "),{language:"en-IN",rate:.91,pitch:1});
+    void Speech.stop();
+    const lang=session?.profile.registration?.preferred_language;
+    Speech.speak(answer.replace(/\n/g,". "),{
+      language:lang==="en"?"en-IN":lang==="ur"?"ur-PK":"hi-IN",
+      rate:.9,pitch:1
+    });
   }
-  function speakMessage(answer:string){Speech.stop();Speech.speak(answer.replace(/\n/g,". "),{language:"en-IN",rate:.92});}
   async function choose(field:string,value:string){
-    if(PREVIEW){if(field==="looking_for")setScreen("for");else setScreen(field==="profile_for"?(value==="relative"?"relation":"chat"):"chat");return;}
+    if(PREVIEW){
+      setScreen(field==="preferred_language"?"purpose":
+        field==="looking_for"?"for":
+        field==="profile_for"?(value==="relative"?"relation":"marital"):
+        field==="registrant_relationship_to_candidate"?"marital":"chat");
+      return;
+    }
     await task(async()=>{
       const d=await api<{session:Session}>("/abc/choice",{method:"POST",body:{field,value}});
       goState(d.session);
@@ -192,7 +209,7 @@ function App(){
   }
   async function signup(){
     if(pin.length!==4||pin!==confirmPin){setError("Enter the same four-digit PIN twice. / Dono PIN ek jaise hon.");return;}
-    if(PREVIEW){setScreen("purpose");return;}
+    if(PREVIEW){setScreen("language");return;}
     await task(async()=>{
       const result=await api<{token:string;session:Session}>("/abc/signup",{method:"POST",body:{phone:phone.trim(),pin}});
       await setMemberToken(result.token);
@@ -220,47 +237,49 @@ function App(){
       });
       setText("");
       goState(result.session);
-      const last=result.session.messages[result.session.messages.length-1];
-      if(last?.role==="assistant")speech(last.text);
     });
   }
   async function startVoice(){
-    if(PREVIEW){setScreen("recording");return;}
+    if(PREVIEW){setRecording(true);return;}
     await task(async()=>{
-      const perm=await AudioModule.requestRecordingPermissionsAsync();
-      if(!perm.granted)throw Error("Microphone permission is needed. / Mic ki ijazat dein.");
+      const permission=await AudioModule.requestRecordingPermissionsAsync();
+      if(!permission.granted)throw Error("Microphone permission is needed. / Mic ki ijazat dein.");
       await setAudioModeAsync({allowsRecording:true,playsInSilentMode:true});
       await recorder.prepareToRecordAsync();
       recorder.record();
-      setScreen("recording");
+      setRecording(true);
     });
   }
   async function stopVoice(){
-    if(PREVIEW){setScreen("chat");return;}
+    if(PREVIEW){setRecording(false);setText("Main Delhi mein rehta hoon.");return;}
     await task(async()=>{
       await recorder.stop();
-      setScreen("chat");
+      setRecording(false);
       if(!recorder.uri)throw Error("No recording was captured. / Awaaz nahi mili.");
       const data=await new File(recorder.uri).base64();
       if(data.length>1200000)throw Error("Please use a shorter voice answer. / Chhoti recording karein.");
       const result=await api<{text:string}>("/abc/audio/transcribe",{
         method:"POST",body:{data,format:"m4a"}
       });
-      setText(result.text);
-      // The recording button itself submits the speech; no second Send tap is needed.
-      // Call the API directly because task() holds the busy flag.
-      if(!session)return;
-      const next=await api<{session:Session}>("/abc/reply",{
-        method:"POST",body:{text:result.text,version:session.version}
-      });
-      setText("");
-      goState(next.session);
-      const message=next.session.messages.at(-1);
-      if(message?.role==="assistant")speech(message.text);
+      setText(current=>current.trim()?current.trim()+" "+result.text:result.text);
+    });
+  }
+  async function checkPhone(){
+    if(PREVIEW){setScreen("verify");return;}
+    await task(async()=>{
+      const result=await api<{registered:boolean}>("/abc/phone/check",{method:"POST",body:{phone:phone.trim()}});
+      setScreen(result.registered?"registered":"verify");
+    });
+  }
+  async function skipPhotoPrompt(){
+    if(PREVIEW){setScreen("done");return;}
+    await task(async()=>{
+      const result=await api<{session:Session}>("/abc/photo/prompt",{method:"POST",body:{}});
+      goState(result.session);
     });
   }
   async function pickPhoto(){
-    if(PREVIEW){setPhotoSaved(true);setScreen("chat");return;}
+    if(PREVIEW){setPhotoSaved(true);if(screen==="photoOffer")setScreen("done");return;}
     await task(async()=>{
       const selection=await ImagePicker.launchImageLibraryAsync({
         mediaTypes:["images"],allowsEditing:true,aspect:[1,1],quality:.55,base64:true
@@ -275,6 +294,7 @@ function App(){
       setPhotoSaved(true);
       const state=await api<{session:Session}>("/abc/state");
       setSession(state.session);
+      if(screen==="photoOffer")setScreen("done");
     });
   }
   async function deletePhoto(){
@@ -456,7 +476,7 @@ function App(){
   }
   function chatScreen(){
     const messages=session?.messages||[];
-    return <KeyboardAvoidingView style={st.page} behavior={Platform.OS==="ios"?"padding":undefined}>
+    return <KeyboardAvoidingView style={st.page} behavior={Platform.OS==="ios"?"padding":"height"} keyboardVerticalOffset={0}>
       {header("Conversation",()=>Alert.alert("Saved / Save ho gaya","Your answers remain saved. / Jawaab save rahenge."),"Baat-cheet")}
       <View style={{paddingHorizontal:22,paddingBottom:10}}>
         <View style={st.progress}><View style={[st.progressFill,{width:(session?.progress||0)+"%"}]}/></View>
@@ -480,28 +500,17 @@ function App(){
       </ScrollView>
       <View style={styles.composer}>
         <Circle text="+" label="Add optional profile photo" onPress={()=>void pickPhoto()} disabled={busy}/>
-        <TextInput style={styles.composeInput} placeholder="Write here / Yahan likhein…"
+        <TextInput style={styles.composeInput}
+          placeholder={profile.registration?.preferred_language==="en"?"Type your answer…":"Apna jawab likhein…"}
           accessibilityLabel="Your answer" multiline placeholderTextColor={T.faint}
-          value={text} onChangeText={setText}/>
-        <Circle text={text.trim()?"↑":"🎤"} kind="accent" size={50} disabled={busy}
-          label={text.trim()?"Send answer":"Start voice recording"}
-          onPress={()=>text.trim()?void sendAnswer(text):void startVoice()}/>
+          value={text} onChangeText={setText} onFocus={()=>
+            requestAnimationFrame(()=>scrollRef.current?.scrollToEnd({animated:true}))}/>
+        <Circle text={recording?"■":"🎤"} kind="accent" size={43} disabled={busy}
+          label={recording?"Stop voice recording":"Start voice recording"}
+          onPress={()=>recording?void stopVoice():void startVoice()}/>
+        <Circle text="↑" kind="accent" size={46} disabled={busy||recording||!text.trim()}
+          label="Send answer" onPress={()=>void sendAnswer(text)}/>
       </View>
-      <Text style={[st.note,{textAlign:"center",paddingVertical:6,backgroundColor:T.white}]}>
-        Tap an ABC reply to hear it / Sunne ke liye tap karein
-      </Text>
-      {recording?<View style={styles.recordOverlay}>
-        <View style={styles.recordCard}>
-          <View style={{width:84,height:84,borderRadius:42,backgroundColor:T.light,alignItems:"center",justifyContent:"center",marginBottom:20}}>
-            <Text style={{fontSize:35,color:T.accent}}>●</Text>
-          </View>
-          <H en="Listening…" roman="Aapki awaaz sun rahe hain" center/>
-          <Text style={[st.note,{textAlign:"center",marginBottom:27}]}>Tap once to stop and send your answer.</Text>
-          <Btn en="Stop & send" roman="Rok kar bhejein" onPress={()=>void stopVoice()}/>
-          <View style={{height:13}}/>
-          <Btn en="Cancel" roman="Rehne dein" secondary onPress={()=>{if(!PREVIEW)void recorder.stop().catch(()=>undefined);setScreen("chat");}}/>
-        </View>
-      </View>:null}
     </KeyboardAvoidingView>;
   }
   function reviewPage(){
