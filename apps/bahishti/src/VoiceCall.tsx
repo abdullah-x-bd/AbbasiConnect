@@ -57,6 +57,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
   const silenceWarnedRef=useRef(false);
   const lastSpeechEndRef=useRef(0);
   const greetedRef=useRef(false);
+  const sessionStartedRef=useRef(false);
   const onEndRef=useRef(onEnd);
   const onSessionRef=useRef(onSession);
   useEffect(()=>{
@@ -129,7 +130,9 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     }
   }
   function sendOpeningQuestion(){
-    if(greetedRef.current||dcRef.current?.readyState!=="open")return;
+    // Per GPT-Live's protocol, client updates must follow session.started.
+    if(greetedRef.current||!sessionStartedRef.current||
+       dcRef.current?.readyState!=="open")return;
     greetedRef.current=true;
     const initial=[...sessionRef.current.messages].reverse().find(m=>m.role==="assistant")?.text||
       "Please tell me your full name and age.";
@@ -219,6 +222,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     let msg:LiveEvent;
     try{msg=JSON.parse(raw);}catch{return;}
     if(msg.type==="session.started"){
+      sessionStartedRef.current=true;
       markConnected();
       sendOpeningQuestion();
       return;
