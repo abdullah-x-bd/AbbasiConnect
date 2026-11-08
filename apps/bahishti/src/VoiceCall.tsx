@@ -129,7 +129,6 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     outputTextLastAtRef.current=0;
     waitingAtRef.current=0;
     setAssistantCaption("");
-    setRepeatCount(current=>current);
     nextOutputLoggedRef.current=false;
     setPhase("asking");
     audioAllowed(true);
