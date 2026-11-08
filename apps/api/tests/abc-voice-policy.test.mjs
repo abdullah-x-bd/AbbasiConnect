@@ -9,7 +9,7 @@ import {
 
 test("four-minute hard limit and thirty-second silence cutoff",()=>{
   assert.equal(VOICE_MAX_DURATION_MS,240000);
-  assert.equal(VOICE_SILENCE_WARNING_MS,20000);
+  assert.equal(VOICE_SILENCE_WARNING_MS,15000);
   assert.equal(VOICE_SILENCE_END_MS,30000);
   assert.ok(VOICE_SILENCE_WARNING_MS<VOICE_SILENCE_END_MS);
   const started=1000000;

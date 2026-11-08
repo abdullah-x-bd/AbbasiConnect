@@ -1,6 +1,6 @@
 // Hard limits are enforced by ABC, not merely suggested to the voice model.
 export const VOICE_MAX_DURATION_MS=4*60*1000;
-export const VOICE_SILENCE_WARNING_MS=20*1000;
+export const VOICE_SILENCE_WARNING_MS=15*1000;
 export const VOICE_SILENCE_END_MS=30*1000;
 export const VOICE_ALLOWED_OFF_TOPIC=4;
 export const VOICE_STARTED_KEY="__abc_voice_started_at";

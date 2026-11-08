@@ -23,7 +23,7 @@ const START_SPEAK_MS=15*1000;
 const MIC_THRESHOLD=0.027;
 const BARGE_IN_THRESHOLD=0.075;
 const OUTPUT_THRESHOLD=0.022;
-const QUIET_PLAYBACK_MS=950;
+const QUIET_PLAYBACK_MS=1550;
 
 function explain(error:unknown):string{
   return error instanceof Error?error.message:"The audio connection was interrupted.";
@@ -41,6 +41,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
   const [secondsLeft,setSecondsLeft]=useState(CALL_MS/1000);
   const [unrelatedCount,setUnrelatedCount]=useState(0);
   const [repeatCount,setRepeatCount]=useState(0);
+  const [waitSeconds,setWaitSeconds]=useState(15);
   const [saved,setSaved]=useState(session.progress);
 
   const phaseRef=useRef<Phase>("connecting");
@@ -56,7 +57,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
   const openaiReadyRef=useRef(false);
   const greetingSentRef=useRef(false);
   const collectorRef=useRef(new VoiceTurnCollector());
-  const delegatedIdsRef=useRef<string[]>([]);
+  const delegatedIdsRef=useRef<{id:string;offset:number}[]>([]);
   const delegationSeenRef=useRef(new Set<string>());
   const replyLockRef=useRef(false);
   const waitLockRef=useRef(false);
@@ -72,6 +73,8 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
   const micSampledRef=useRef(false);
   const micConfirmedRef=useRef(false);
   const micPeakCountRef=useRef(0);
+  const lastTurnFinalizedAtRef=useRef(0);
+  const nextOutputLoggedRef=useRef(false);
   const micLastAtRef=useRef(0);
   const inputTextLastAtRef=useRef(0);
   const lastUserActivityRef=useRef(0);
@@ -106,13 +109,10 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     send("session.thinking.append",{delegation_id:id,content:text.slice(0,700)});
   }
   function sayQuestion(question:string,id:string|null=null){
-    // Commentary is a REQUEST to speak, not proof speech played. No answer
-    // timer begins until output playback actually goes quiet.
-    send("session.commentary.append",{
-      delegation_id:id,
-      content:"Ask only this exact ABC matrimonial question, in the user's language: "+
-        clip(question)+". Then stop speaking completely and listen. No filler."
-    });
+    // The startup prompt already tells GPT-Live to speak authorized questions
+    // and then stop. Supply the QUESTION as commentary, not meta-instructions
+    // that might themselves be spoken to the user.
+    send("session.commentary.append",{delegation_id:id,content:clip(question)});
   }
   function audioAllowed(allowed:boolean){
     audioAllowedRef.current=allowed;
@@ -129,6 +129,8 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     outputTextLastAtRef.current=0;
     waitingAtRef.current=0;
     setAssistantCaption("");
+    setRepeatCount(current=>current);
+    nextOutputLoggedRef.current=false;
     setPhase("asking");
     audioAllowed(true);
     sayQuestion(question,id);
@@ -178,6 +180,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
         audioAllowed(false);
         setPhase("waiting");
         waitingAtRef.current=Date.now();
+        setWaitSeconds(15);
       }
     }catch(exc){
       if(activeRef.current&&phaseRef.current==="asking"){
@@ -215,6 +218,10 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
 
   async function sendAnswer(text:string,turnId:string,delegationId:string|null){
     if(!activeRef.current)return;
+    // A voice turn can finish while /live/wait is acknowledging question
+    // playback. Wait for that write before sending the versioned answer.
+    for(let i=0;i<40&&waitLockRef.current&&activeRef.current;i++)await sleep(80);
+    if(!activeRef.current)return;
     const started=Date.now(),version=sessionRef.current.version;
     const payload={text,version,voiceTurnId:turnId};
     for(let attempt=0;attempt<2;attempt++){
@@ -249,6 +256,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
         }
         const question=res.session.messages.at(-1)?.text||"Please continue with the next question.";
         const lead=wasDistracted?"Please stay with the profile questions. ":"";
+        setRepeatCount(0);
         issueQuestion(lead+question,delegationId);
         return;
       }catch(exc){
@@ -278,8 +286,14 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     setUserCaption(clip(complete.text));
     const turnId=callNonceRef.current.replace(/[^A-Za-z0-9_-]/g,"").slice(0,62)+
       "_"+(++utteranceNumberRef.current);
-    const delegationId=delegatedIdsRef.current.shift()||null;
+    // A single user utterance can trigger multiple model delegations. Match
+    // only a delegation near this utterance's audio timeline and discard older
+    // duplicates, instead of assigning them to the next question.
+    const eligible=delegatedIdsRef.current.filter(x=>x.offset<=complete.endMs+2500);
+    const delegationId=eligible.length?eligible[eligible.length-1].id:null;
+    delegatedIdsRef.current=delegatedIdsRef.current.filter(x=>x.offset>complete.endMs+2500);
     if(delegationId)silentContext("",delegationId);
+    lastTurnFinalizedAtRef.current=Date.now();
     console.info("ABC_VOICE_TIMING",{stage:"turn_finalized",fragments:complete.fragments,
       utteranceAudioMs:complete.endMs-complete.startMs});
     try{
@@ -323,6 +337,10 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
             questionOutputRef.current=true;
             seenOutputRef.current=true;
             outputLastAtRef.current=now;
+            if(!nextOutputLoggedRef.current&&lastTurnFinalizedAtRef.current>0){
+              nextOutputLoggedRef.current=true;
+              console.info("ABC_VOICE_TIMING",{stage:"next_audio",sinceTurnMs:now-lastTurnFinalizedAtRef.current});
+            }
           }else if(phaseRef.current==="waiting"||phaseRef.current==="listening"||
                    phaseRef.current==="processing"){
             // Out-of-turn voice is not played. The model may still generate it,
@@ -381,7 +399,9 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
       const id=msg.delegation.id;
       if(delegationSeenRef.current.has(id))return;
       delegationSeenRef.current.add(id);
-      delegatedIdsRef.current.push(id);
+      delegatedIdsRef.current.push({id,offset:Number(msg.offset_ms)||0});
+      if(delegatedIdsRef.current.length>12)
+        delegatedIdsRef.current=delegatedIdsRef.current.slice(-12);
       // Suppress tool acknowledgments, but NEVER assume a delegation timestamp
       // identifies the final word of a user turn.
       silentContext("",id);
@@ -412,8 +432,11 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
       if(voiceFinished||transcriptFinished||noPlaybackFallback)
         void markQuestionPlayed(questionSeqRef.current);
     }else if(p==="waiting"){
-      if(waitingAtRef.current&&now-waitingAtRef.current>=START_SPEAK_MS)
-        void handleNoAnswer();
+      if(waitingAtRef.current){
+        const timeLeft=Math.max(0,Math.ceil((START_SPEAK_MS-(now-waitingAtRef.current))/1000));
+        setWaitSeconds(timeLeft);
+        if(now-waitingAtRef.current>=START_SPEAK_MS)void handleNoAnswer();
+      }
     }else if(p==="listening"){
       // There is no "transcript.done" in GPT-Live. Wait for locally observed
       // speech to stop, plus a network grace interval for late deltas.
@@ -552,7 +575,8 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
       </Text>
       <Text style={[st.sub,{textAlign:"center"}]}>
         {phase==="waiting"?
-          (repeatCount?"Please begin your answer within 15 seconds.":"You have 15 seconds to start speaking."):
+          (repeatCount?"Question repeated once. Start speaking in "+waitSeconds+" seconds.":
+            "Start speaking in "+waitSeconds+" seconds. Take your time finishing."):
           "ABC waits for a complete answer before asking its next question."}
       </Text>
       {assistantCaption?<View style={[st.card,{width:"100%"}]}>
