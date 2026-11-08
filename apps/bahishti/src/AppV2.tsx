@@ -325,7 +325,7 @@ function App(){
         setSession(result.session);
       }
       const img=await api<{mimeType:string;filename:string;width:number;height:number;base64:string}>("/abc/biodata");
-      if(img.mimeType!=="image/jpeg"||!img.base64||img.width!==1200||img.height!==1800)
+      if(img.mimeType!=="image/jpeg"||!img.base64||img.width!==1080||img.height!==1350)
         throw Error("The biodata image was not generated. / Biodata tasveer nahi bani.");
       const safeName=String(readAt(session?.profile||account?.profile,"candidate.full_name")||"Candidate")
         .replace(/[^A-Za-z0-9 ]/g,"").trim().replace(/\s+/g,"-").slice(0,36);
