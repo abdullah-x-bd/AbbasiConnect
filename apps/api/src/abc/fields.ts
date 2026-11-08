@@ -16,6 +16,7 @@ export type FieldDef = {
   allowUnknown?: boolean;
   label: string;
   ask: Record<Lang, string>;
+  targetPaths?: string[];
 };
 
 const q=(en:string,hi:string,ur:string,roman:string):Record<Lang,string>=>({en,hi,ur,roman});
@@ -34,16 +35,16 @@ export const FIELDS: FieldDef[] = [
   f("candidate.ancestral_location.district","text",false,"Ancestral district",q("Do you know the family's ancestral district?","क्या पुश्तैनी ज़िला मालूम है?","کیا آبائی ضلع معلوم ہے؟","Kya aabai zila maloom hai?")),
   f("candidate.education.highest_qualification","text",true,"Highest qualification",q("What is the candidate's highest educational qualification?","उम्मीदवार की सबसे ऊँची शैक्षिक योग्यता क्या है?","امیدوار کی سب سے اونچی تعلیمی قابلیت کیا ہے؟","Candidate ki sabse aala taleemi qualification kya hai?")),
   f("candidate.education.institution","text",false,"Institution",q("Which school, college or university did they attend?","उन्होंने किस स्कूल, कॉलेज या यूनिवर्सिटी में पढ़ाई की है?","انہوں نے کس اسکول، کالج یا یونیورسٹی سے تعلیم حاصل کی؟","Unhone kis school, college ya university se taleem hasil ki?")),
-  f("candidate.education.two_sentence_description","education_description",true,"Education in two sentences",q("Please describe the candidate's education in about two sentences, including what and where they studied.","दो वाक्यों में उम्मीदवार की पढ़ाई के बारे में बताइए, क्या पढ़ा और कहाँ पढ़ा।","دو جملوں میں امیدوار کی تعلیم بتائیے، کیا پڑھا اور کہاں پڑھا۔","Do jumlon mein candidate ki taleem batayein, kya aur kahan padha.")),
+  f("candidate.education.two_sentence_description","education_description",false,"Education in two sentences",q("Please describe the candidate's education in about two sentences, including what and where they studied.","दो वाक्यों में उम्मीदवार की पढ़ाई के बारे में बताइए, क्या पढ़ा और कहाँ पढ़ा।","دو جملوں میں امیدوار کی تعلیم بتائیے، کیا پڑھا اور کہاں پڑھا۔","Do jumlon mein candidate ki taleem batayein, kya aur kahan padha.")),
   f("candidate.occupation.profession_or_role","text",true,"Occupation or current activity",q("What does the candidate currently do, such as working, studying, running a business or something else?","उम्मीदवार इस समय क्या करते हैं, नौकरी, पढ़ाई, कारोबार या कुछ और?","امیدوار اس وقت کیا کرتے ہیں، ملازمت، تعلیم، کاروبار یا کچھ اور؟","Candidate aajkal kya karte hain, naukri, taleem, karobar ya kuch aur?")),
   f("candidate.occupation.employer_or_business","text",false,"Employer or business",q("Would you like to mention the employer or business name?","क्या आप नौकरी या कारोबार की जगह बताना चाहेंगे?","کیا آپ ملازمت یا کاروبار کی جگہ بتانا چاہیں گے؟","Kya aap employer ya business ka naam batana chahenge?")),
-  f("candidate.languages","languages",true,"Languages and literacy",q("Which languages can the candidate speak? For each, tell me whether they can also read and write it.","उम्मीदवार कौन-सी भाषाएँ बोलते हैं? हर भाषा के लिए यह भी बताइए कि पढ़ और लिख सकते हैं या नहीं।","امیدوار کون سی زبانیں بولتے ہیں؟ ہر زبان کے لیے یہ بھی بتائیے کہ پڑھ اور لکھ سکتے ہیں یا نہیں۔","Candidate kaunsi zubanein bolte hain? Har zuban ko parh aur likh bhi sakte hain?")),
+  f("candidate.languages","languages",false,"Languages and literacy",q("Which languages can the candidate speak? For each, tell me whether they can also read and write it.","उम्मीदवार कौन-सी भाषाएँ बोलते हैं? हर भाषा के लिए यह भी बताइए कि पढ़ और लिख सकते हैं या नहीं।","امیدوار کون سی زبانیں بولتے ہیں؟ ہر زبان کے لیے یہ بھی بتائیے کہ پڑھ اور لکھ سکتے ہیں یا نہیں۔","Candidate kaunsi zubanein bolte hain? Har zuban ko parh aur likh bhi sakte hain?")),
   f("family.father.name","text",true,"Father's name",q("What is the candidate's father's name?","उम्मीदवार के वालिद का नाम क्या है?","امیدوار کے والد کا نام کیا ہے؟","Candidate ke walid ka naam kya hai?"),true),
   f("family.father.profession","text",true,"Father's profession",q("What does the candidate's father do, or what was his profession?","उम्मीदवार के वालिद क्या करते हैं या क्या काम करते थे?","امیدوار کے والد کیا کرتے ہیں یا کیا کرتے تھے؟","Candidate ke walid kya karte hain ya kya kaam karte the?"),true),
-  f("family.father.education","text",true,"Father's education",q("What is the candidate's father's educational background?","उम्मीदवार के वालिद की पढ़ाई कहाँ तक हुई है?","امیدوار کے والد کی تعلیم کہاں تک ہوئی ہے؟","Candidate ke walid ne kahan tak taleem hasil ki hai?"),true),
+  f("family.father.education","text",false,"Father's education",q("What is the candidate's father's educational background?","उम्मीदवार के वालिद की पढ़ाई कहाँ तक हुई है?","امیدوار کے والد کی تعلیم کہاں تک ہوئی ہے؟","Candidate ke walid ne kahan tak taleem hasil ki hai?"),true),
   f("family.mother.name","text",true,"Mother's name",q("What is the candidate's mother's name?","उम्मीदवार की वालिदा का नाम क्या है?","امیدوار کی والدہ کا نام کیا ہے؟","Candidate ki walida ka naam kya hai?"),true),
   f("family.mother.profession","text",true,"Mother's profession",q("What does the candidate's mother do, or what was her profession? Homemaker is also a valid answer.","उम्मीदवार की वालिदा क्या करती हैं या क्या काम करती थीं? गृहिणी भी एक सही जवाब है।","امیدوار کی والدہ کیا کرتی ہیں یا کیا کام کرتی تھیں؟ گھریلو خاتون بھی درست جواب ہے۔","Candidate ki walida kya karti hain? Homemaker bhi bilkul valid jawab hai."),true),
-  f("family.mother.education","text",true,"Mother's education",q("What is the candidate's mother's educational background?","उम्मीदवार की वालिदा की पढ़ाई कहाँ तक हुई है?","امیدوار کی والدہ کی تعلیم کہاں تک ہوئی ہے؟","Candidate ki walida ne kahan tak taleem hasil ki hai?"),true),
+  f("family.mother.education","text",false,"Mother's education",q("What is the candidate's mother's educational background?","उम्मीदवार की वालिदा की पढ़ाई कहाँ तक हुई है?","امیدوار کی والدہ کی تعلیم کہاں تک ہوئی ہے؟","Candidate ki walida ne kahan tak taleem hasil ki hai?"),true),
   f("family.siblings.brothers_count","count",true,"Number of brothers",q("How many brothers does the candidate have?","उम्मीदवार के कितने भाई हैं?","امیدوار کے کتنے بھائی ہیں؟","Candidate ke kitne bhai hain?")),
   f("family.siblings.sisters_count","count",true,"Number of sisters",q("And how many sisters does the candidate have?","और उम्मीदवार की कितनी बहनें हैं?","اور امیدوار کی کتنی بہنیں ہیں؟","Aur candidate ki kitni behnein hain?")),
   f("family.family_introduction","text",false,"Family introduction",q("Would you like to say a little more about the family, including siblings if relevant?","क्या आप परिवार के बारे में कुछ और बताना चाहेंगे?","کیا آپ خاندان کے بارے میں کچھ اور بتانا چاہیں گے؟","Kya aap khandan ke baare mein kuch aur batana chahenge?")),
@@ -136,14 +137,58 @@ export function getLanguage(profile:Profile):Lang {
   const v=profile?.registration?.preferred_script;
   return LANGS.includes(v)?v:"en";
 }
+// Seven short clusters replace a long one-field-at-a-time interview.
+// When a person supplies several answers together, missing fields in that
+// cluster are recalculated and only those still missing are re-asked.
+export type CoreGroup = {id:string;paths:string[];labelsEn:string[];labelsRoman:string[]};
+export const CORE_GROUPS:CoreGroup[]=[
+ {id:"identity",paths:["candidate.full_name","candidate.age_years","candidate.gender"],
+  labelsEn:["candidate's full name","age in years","gender"],
+  labelsRoman:["poora naam","umr saalon mein","gender"]},
+ {id:"location",paths:["candidate.current_location.city","candidate.ancestral_location.city_or_town"],
+  labelsEn:["current city","ancestral town or city"],
+  labelsRoman:["abhi ka shehar","aabai shehar ya qasba"]},
+ {id:"basics",paths:["candidate.height_cm","candidate.marital_status"],
+  labelsEn:["height","marital status"],
+  labelsRoman:["qad","shaadi ki haalat"]},
+ {id:"work",paths:["candidate.education.highest_qualification","candidate.occupation.profession_or_role"],
+  labelsEn:["highest qualification","current work or study"],
+  labelsRoman:["sabse aala taleem","abhi ka kaam ya padhai"]},
+ {id:"father",paths:["family.father.name","family.father.profession"],
+  labelsEn:["father's name","father's profession"],
+  labelsRoman:["walid ka naam","walid ka kaam"]},
+ {id:"mother",paths:["family.mother.name","family.mother.profession"],
+  labelsEn:["mother's name","mother's profession"],
+  labelsRoman:["walida ka naam","walida ka kaam"]},
+ {id:"siblings",paths:["family.siblings.brothers_count","family.siblings.sisters_count"],
+  labelsEn:["number of brothers","number of sisters"],
+  labelsRoman:["kitne bhai hain","kitni behnein hain"]}
+];
+export function isFieldSatisfied(def:FieldDef,states:FieldStates):boolean{
+  const status=states[def.path]??"not_asked";
+  return status==="answered"||(status==="unknown"&&Boolean(def.allowUnknown));
+}
 export function nextQuestion(profile:Profile,states:FieldStates):FieldDef|null {
-  for(const def of FIELDS) {
-    const status=states[def.path]??"not_asked";
-    if(status==="answered"||status==="declined"||(status==="unknown"&&(!def.required||def.allowUnknown)))continue;
-    if(!def.required) continue;
-    return def;
+  for(const group of CORE_GROUPS){
+    const missing=group.paths.filter(path=>{
+      const def=FIELD_MAP.get(path);
+      return def&&def.required&&!isFieldSatisfied(def,states);
+    });
+    if(!missing.length)continue;
+    const main=FIELD_MAP.get(missing[0])!;
+    if(missing.length===1)return {...main,targetPaths:missing};
+    const pieces=missing.map(path=>group.paths.indexOf(path));
+    const en=pieces.map(i=>group.labelsEn[i]).join(", ");
+    const roman=pieces.map(i=>group.labelsRoman[i]).join(", ");
+    const enQuestion="Please tell me the "+en+".";
+    const romanQuestion="Batayein: "+roman+".";
+    return {...main,targetPaths:missing,ask:{en:enQuestion,roman:romanQuestion,hi:romanQuestion,ur:romanQuestion}};
   }
   return null;
+}
+export function groupProgress(states:FieldStates){
+  const finished=CORE_GROUPS.filter(g=>g.paths.every(path=>isFieldSatisfied(FIELD_MAP.get(path)!,states))).length;
+  return {finished,total:CORE_GROUPS.length};
 }
 export function missingRequired(states:FieldStates):string[] {
   return FIELDS.filter(f=>f.required&&!["answered",...(f.allowUnknown?["unknown"]:[])].includes(states[f.path])).map(f=>f.path);
