@@ -54,5 +54,7 @@ jobs:
           path: abc-biodata-preview/ABC-Biodata-v1.3-Sample.jpg
           if-no-files-found: error
           retention-days: 30
+      - name: Verify supplied ABC emblem and ivory-green theme
+        run: node --test apps/bahishti/tests/brand-theme.test.mjs
       - name: Typecheck ABC Android app
         run: npm run typecheck -w @abbasiconnect/bahishti
