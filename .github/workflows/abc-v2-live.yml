@@ -17,6 +17,8 @@ jobs:
   live:
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    env:
+      ABC_CAPTURE_JPEG: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -36,5 +38,13 @@ jobs:
           done
           echo "New registration service did not become live"
           exit 1
-      - name: Test persistent login and bilingual AI interview
+      - name: Test persistent login, concise AI, biodata and optional details
         run: node apps/api/tests/abc-v2-live.mjs
+      - name: Upload genuine JPEG sample for visual review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ABC-v1.2-Biodata-Sample
+          path: abc-jpeg-evidence/
+          if-no-files-found: warn
+          retention-days: 14
