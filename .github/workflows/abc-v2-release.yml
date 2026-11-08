@@ -1,4 +1,4 @@
-name: Publish ABC v1.2 direct APK
+name: Publish ABC v1.3 direct APK
 
 on:
   workflow_run:
@@ -6,9 +6,11 @@ on:
     types: [completed]
     branches: [main]
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: [".github/workflows/abc-v2-release.yml"]
+    inputs:
+      build_run_id:
+        description: Successful ABC Android build run ID
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -21,26 +23,26 @@ jobs:
     timeout-minutes: 25
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: abc-bahishti-v1.2.0
+      TAG: abc-bahishti-v1.3.0
     steps:
       - uses: actions/checkout@v4
-      - name: Download successful Android APK
+      - name: Download APK from this exact successful Android build
         run: |
+          set -euo pipefail
           mkdir -p abc-apk
-          RUN_ID="${{ github.event.workflow_run.id || '42450638470' }}"
-          if [ "$RUN_ID" = "0" ]; then
-            echo "Use workflow_run or supply a known successful build"
-            exit 1
-          fi
+          RUN_ID="${{ github.event.workflow_run.id || inputs.build_run_id }}"
+          test -n "$RUN_ID"
           gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name ABC-Bahishti-Android-APK --dir abc-apk
           test -s abc-apk/app-release.apk
-          cp abc-apk/app-release.apk ABC-Bahishti-Connections-v1.2.apk
-          file ABC-Bahishti-Connections-v1.2.apk
-      - name: Publish direct APK without ZIP extraction
+          cp abc-apk/app-release.apk ABC-Bahishti-Connections-v1.3.apk
+          file ABC-Bahishti-Connections-v1.3.apk
+          ls -lh ABC-Bahishti-Connections-v1.3.apk
+      - name: Publish direct-install APK
         run: |
+          set -euo pipefail
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" ABC-Bahishti-Connections-v1.2.apk --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$TAG" ABC-Bahishti-Connections-v1.3.apk --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$TAG" ABC-Bahishti-Connections-v1.2.apk --repo "$GITHUB_REPOSITORY" --target main --title "ABC Bahishti Connections v1.2" --notes "Seven short grouped AI questions and optional enrichment. Download and share a professionally designed JPEG biodata with optional photo. Existing English and Roman Hindustani app interface retained; phone verification remains a demo placeholder." --latest=false
+            gh release create "$TAG" ABC-Bahishti-Connections-v1.3.apk --repo "$GITHUB_REPOSITORY" --target main --title "ABC Bahishti Connections v1.3" --notes "Same ABC app and short onboarding. Updated 1080×1350 WhatsApp-friendly biodata JPEG with large English and Roman Hindustani labels, minimal content, optional photo and footer: Prepared by ABC Abbasi Bahishti Connections. Temporary phone verification remains unchanged." --latest=false
           fi
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets

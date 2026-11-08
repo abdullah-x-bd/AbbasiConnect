@@ -47,7 +47,7 @@ export function BiodataScreen({jpegUri,profile,photoUri,busy,onBack,onSave,onSha
       </Text>
       {jpegUri?
         <Image accessibilityLabel="Generated JPEG matrimonial biodata preview" source={{uri:jpegUri}}
-          resizeMode="contain" style={{width:"100%",aspectRatio:1200/1800,borderRadius:12,backgroundColor:T.white,
+          resizeMode="contain" style={{width:"100%",aspectRatio:1080/1350,borderRadius:12,backgroundColor:T.white,
             borderWidth:1,borderColor:T.border}}/>:
         <View style={{backgroundColor:"#FCFCFA",borderRadius:14,borderWidth:1,borderColor:T.border,
           minHeight:430,padding:22}}>
