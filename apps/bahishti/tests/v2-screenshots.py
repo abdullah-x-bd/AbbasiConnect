@@ -13,23 +13,25 @@ OUT.mkdir(exist_ok=True)
 SCREENS=[
     ("01-welcome","Welcome / Home"),
     ("02-phone","Mobile number"),
-    ("03-verification","Temporary verification step"),
-    ("04-pin","Four-digit PIN setup"),
-    ("05-login","Returning member login"),
-    ("06-seeking","Bride or groom choice"),
-    ("07-profile-for","Registering for self or family"),
-    ("08-relationship","Family relationship"),
-    ("09-chat","Simple AI conversation"),
-    ("10-photo","Optional chat photo confirmation"),
-    ("11-recording","Tap-to-record voice overlay"),
-    ("12-thank-you","Interview completion"),
-    ("13-review","Review and correct information"),
-    ("14-explore","Explore Rishte"),
-    ("15-interests","Interests inbox"),
-    ("16-profile","My profile"),
-    ("17-paused","Saved conversation and resume"),
-    ("18-biodata","JPEG biodata preview"),
-    ("19-more-details","Optional enrichment editor"),
+    ("03-existing","Already registered phone"),
+    ("04-verification","Temporary verification step"),
+    ("05-pin","Four-digit PIN setup"),
+    ("06-login","Returning member login"),
+    ("07-language","Hinglish or English language choice"),
+    ("08-seeking","Bride or groom choice"),
+    ("09-profile-for","Registering for self or family"),
+    ("10-relationship","Family relationship"),
+    ("11-marital","Marital status choice"),
+    ("12-chat","Inline microphone and separate Send button"),
+    ("13-photo","Optional photo upload or skip"),
+    ("14-thank-you","Interview completion"),
+    ("15-review","Review and correct information"),
+    ("16-explore","Explore Rishte"),
+    ("17-interests","Interests inbox"),
+    ("18-profile","My profile"),
+    ("19-paused","Saved conversation and resume"),
+    ("20-biodata","JPEG biodata preview"),
+    ("21-more-details","Optional enrichment editor"),
 ]
 def adb(*args,timeout=45):
     p=subprocess.run(["adb",*args],capture_output=True,text=True,timeout=timeout)
@@ -44,9 +46,10 @@ def bounds(node):
     v=[int(x) for x in re.findall(r"\d+",node.attrib.get("bounds",""))]
     return (v[0]+v[2])//2,(v[1]+v[3])//2
 EXPECTED=[
- "Naya account banayein","Your mobile number","Continue with this number",
- "Choose a 4-digit PIN","Welcome back","Looking for a","Whose profile is this",
- "How are you related","Conversation","Photo saved","Listening",
+ "Naya account banayein","Your mobile number","This number is already registered",
+ "Continue with this number","Choose a 4-digit PIN","Welcome back",
+ "How should we talk","Looking for a","Whose profile is this","How are you related",
+ "Marital status","Conversation","Would you like to add a photo",
  "We have all the details","Your answers","Explore / Rishte",
  "Interests","My profile","Your answers are saved","Your Bio Data","More details"
 ]
