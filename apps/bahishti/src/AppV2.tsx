@@ -921,7 +921,7 @@ function App(){
     return null;
   }
   return <SafeAreaProvider>
-    <StatusBar barStyle="dark-content" backgroundColor={T.paper} translucent={false}/>
+    <StatusBar barStyle="dark-content"/>
     <SafeAreaView style={st.page}>
     {content()}
     {error?<View style={styles.error}>
