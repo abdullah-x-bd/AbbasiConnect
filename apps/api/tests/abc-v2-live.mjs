@@ -34,6 +34,11 @@ try{
   const v=await req("/abc/choice","POST",{field:"onboarding_mode",value:"voice"});
   assert.equal(v.session.profile.registration.onboarding_mode,"voice");
   assert.equal(v.session.currentQuestion,"candidate.full_name");
+  const ready=await req("/abc/live/wait","POST",{action:"ready",version:v.session.version});
+  assert.equal(ready.action,"wait");
+  const tooSoon=await req("/abc/live/wait","POST",{action:"timeout",version:ready.session.version});
+  assert.equal(tooSoon.action,"wait");
+  assert.equal(tooSoon.session.phase,"COLLECTING");
   await req("/abc/live/connect","POST",{sdp:"invalid"},400);
   const ch=await req("/abc/choice","POST",{field:"onboarding_mode",value:"chat"});
   assert.equal(ch.session.profile.registration.onboarding_mode,"chat");

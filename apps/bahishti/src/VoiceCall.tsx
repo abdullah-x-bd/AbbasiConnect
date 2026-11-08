@@ -21,6 +21,7 @@ type Props={
 const CALL_MS=4*60*1000;
 const START_SPEAK_MS=15*1000;
 const MIC_THRESHOLD=0.027;
+const BARGE_IN_THRESHOLD=0.075;
 const OUTPUT_THRESHOLD=0.022;
 const QUIET_PLAYBACK_MS=950;
 
@@ -70,6 +71,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
   const outputSampledRef=useRef(false);
   const micSampledRef=useRef(false);
   const micConfirmedRef=useRef(false);
+  const micPeakCountRef=useRef(0);
   const micLastAtRef=useRef(0);
   const inputTextLastAtRef=useRef(0);
   const lastUserActivityRef=useRef(0);
@@ -238,6 +240,13 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
           return;
         }
         onSessionRef.current(res.session);
+        // If the caller continued speaking during backend processing, hold
+        // onto that speech and validate it before uttering another question.
+        if(collectorRef.current.hasText()){
+          setPhase("listening");
+          audioAllowed(false);
+          return;
+        }
         const question=res.session.messages.at(-1)?.text||"Please continue with the next question.";
         const lead=wasDistracted?"Please stay with the profile questions. ":"";
         issueQuestion(lead+question,delegationId);
@@ -293,7 +302,12 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
       const now=Date.now();
       if(levels.mic!==null){
         micSampledRef.current=true;
-        if(!micMuted&&levels.mic>MIC_THRESHOLD){
+        const bargeIn=phaseRef.current==="asking";
+        if(levels.mic>(bargeIn?BARGE_IN_THRESHOLD:MIC_THRESHOLD))
+          micPeakCountRef.current+=1;
+        else micPeakCountRef.current=0;
+        const likelySpeech=micPeakCountRef.current>=(bargeIn?2:1);
+        if(!micMuted&&likelySpeech){
           micConfirmedRef.current=true;
           micLastAtRef.current=now;
           collectorRef.current.micActivity(now);
@@ -424,7 +438,10 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     if(preview){setPhase("waiting");return ()=>shutdown();}
     (async()=>{
       try{
-        const stream=await (mediaDevices as any).getUserMedia({audio:true,video:false});
+        const stream=await (mediaDevices as any).getUserMedia({
+          audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},
+          video:false
+        });
         if(!activeRef.current){stream.getTracks().forEach((t:any)=>t.stop());return;}
         micRef.current=stream;
         const pc:any=new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});
