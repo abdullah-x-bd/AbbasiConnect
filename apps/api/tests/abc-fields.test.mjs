@@ -123,3 +123,11 @@ test("stored text rejects non-Roman scripts across text and collection fields",(
   assert.equal(normalizeField("partner_preferences.preferred_cities_or_regions",["Delhi","علیگڑھ"]).ok,false);
   assert.equal(normalizeField("candidate.languages",[{name:"اردو",can_speak:true,can_read:false,can_write:false}]).ok,false);
 });
+
+test("ABC onboarding preference is stored independently of candidate facts",()=>{
+  const p=freshProfile();
+  assert.equal(p.registration.onboarding_mode,null);
+  p.registration.onboarding_mode="voice";
+  assert.equal(p.registration.onboarding_mode,"voice");
+  assert.equal(p.candidate.full_name,null);
+});
