@@ -1,4 +1,4 @@
-name: Publish ABC v1.6 direct APK
+name: Publish ABC v1.6.1 direct APK
 
 on:
   workflow_run:
@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 25
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: abc-bahishti-v1.6.0
+      TAG: abc-bahishti-v1.6.1.1
     steps:
       - uses: actions/checkout@v4
       - name: Download APK from this exact successful Android build
@@ -34,15 +34,15 @@ jobs:
           test -n "$RUN_ID"
           gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name ABC-Bahishti-Android-APK --dir abc-apk
           test -s abc-apk/app-release.apk
-          cp abc-apk/app-release.apk ABC-Bahishti-Connections-v1.6.apk
-          file ABC-Bahishti-Connections-v1.6.apk
-          ls -lh ABC-Bahishti-Connections-v1.6.apk
+          cp abc-apk/app-release.apk ABC-Bahishti-Connections-v1.6.1.apk
+          file ABC-Bahishti-Connections-v1.6.1.apk
+          ls -lh ABC-Bahishti-Connections-v1.6.1.apk
       - name: Publish direct-install APK
         run: |
           set -euo pipefail
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" ABC-Bahishti-Connections-v1.6.apk --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$TAG" ABC-Bahishti-Connections-v1.6.1.apk --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$TAG" ABC-Bahishti-Connections-v1.6.apk --repo "$GITHUB_REPOSITORY" --target main --title "ABC Bahishti Connections v1.6" --notes "ABC v1.6: new ivory and forest-green theme inspired by the supplied ABC emblem; icon, welcome screen, headers, cards and navigation restyled without altering functionality. All v1.5 onboarding, voice, profile, deletion and WhatsApp biodata features remain unchanged." --latest=false
+            gh release create "$TAG" ABC-Bahishti-Connections-v1.6.1.apk --repo "$GITHUB_REPOSITORY" --target main --title "ABC Bahishti Connections v1.6.1" --notes "ABC v1.6.1: automatic lightweight model cleanup for voice answers and optional details. Manual Gemini button removed. Spoken answers stay editable and only Save commits profile details. Preserves ivory ABC branding and the full v1.6 feature set." --latest=false
           fi
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets
