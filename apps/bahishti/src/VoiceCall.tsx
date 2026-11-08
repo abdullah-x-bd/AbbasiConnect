@@ -217,8 +217,17 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
       busyRef.current=false;
       // A user may continue speaking while the previous answer is validated.
       // Process that pending turn instead of silently discarding it.
-      if(activeRef.current&&pendingRef.current)
-        timerRef.current=setTimeout(()=>void flushDelegation(),320);
+      if(activeRef.current){
+        if(pendingRef.current){
+          timerRef.current=setTimeout(()=>void flushDelegation(),320);
+        }else{
+          // An overlapping utterance can finish while the previous answer is
+          // being saved. Keep it queued instead of silently dropping it.
+          const latest=Math.max(lastSpeechEndRef.current,
+            ...transcriptRef.current.map(x=>x.end),0);
+          if(latest>lastCutRef.current)scheduleTurnFallback(latest);
+        }
+      }
     }
   }
   function handleLiveEvent(raw:string){
