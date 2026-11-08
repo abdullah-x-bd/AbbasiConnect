@@ -84,7 +84,10 @@ function optionalPrefs(profile:Profile):string|null {
   return parts.length?parts.join(" · "):null;
 }
 
-export function biodataSvg(profile:Profile):string {
+export function biodataSvg(profile:Profile,contactPhone:string|null=null):string {
+  // Include only an explicitly supplied, validated account contact.
+  const phone=typeof contactPhone==="string"&&/^\+[1-9]\d{7,14}$/.test(contactPhone)
+    ?contactPhone:null;
   const name=safeName(at(profile,"candidate.full_name"));
   const age=value(at(profile,"candidate.age_years"));
   const height=value(at(profile,"candidate.height_cm"));
@@ -163,13 +166,18 @@ export function biodataSvg(profile:Profile):string {
   }
 
   svg+='<line x1="54" y1="1288" x2="1026" y2="1288" stroke="#DBE6E0" stroke-width="2"/>';
-  svg+=txt(LEFT,1321,"Prepared by ABC Abbasi Bahishti Connections",19,650,TEAL);
+  if(phone){
+    svg+=txt(LEFT,1314,"Contact / Rabta: "+phone,22,750,INK);
+    svg+=txt(LEFT,1340,"Prepared by ABC Abbasi Bahishti Connections",16,650,TEAL);
+  }else{
+    svg+=txt(LEFT,1321,"Prepared by ABC Abbasi Bahishti Connections",19,650,TEAL);
+  }
   svg+="</svg>";
   return svg;
 }
 
-export async function renderBiodataJpeg(profile:Profile,photoData:string|null):Promise<Buffer>{
-  const svg=Buffer.from(biodataSvg(profile));
+export async function renderBiodataJpeg(profile:Profile,photoData:string|null,contactPhone:string|null=null):Promise<Buffer>{
+  const svg=Buffer.from(biodataSvg(profile,contactPhone));
   let base=sharp(svg,{density:72});
   if(photoData&&/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(photoData)){
     const raw=Buffer.from(photoData.slice(photoData.indexOf(",")+1),"base64");
