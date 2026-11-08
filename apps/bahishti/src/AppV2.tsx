@@ -7,19 +7,21 @@ import {SafeAreaProvider,SafeAreaView} from "react-native-safe-area-context";
 import {AudioModule,RecordingPresets,setAudioModeAsync,useAudioRecorder} from "expo-audio";
 import * as Speech from "expo-speech";
 import * as ImagePicker from "expo-image-picker";
-import {File} from "expo-file-system";
+import {File,Paths,Directory} from "expo-file-system";
+import * as Sharing from "expo-sharing";
+import {BiodataScreen,EnrichmentScreen,EXTRA_FIELDS,type ExtraField} from "./ExtraScreens";
 import {api,clearTokens,restoreTokens,setMemberToken,
   type Session,type Account,type Candidate} from "./api";
 import {T,st,H,Btn,Field,Circle,Back,Hr} from "./minimal-ui";
 
 type Screen="loading"|"welcome"|"signupPhone"|"verify"|"pinSignup"|"signin"|
   "purpose"|"for"|"relation"|"chat"|"chatPhoto"|"recording"|"done"|"review"|
-  "explore"|"interests"|"profile"|"paused";
+  "explore"|"interests"|"profile"|"paused"|"biodata"|"enrich";
 type Interest={id:string;name:string;status:string;note?:string};
 const PREVIEW=process.env.EXPO_PUBLIC_ABC_PREVIEW==="1";
 const SCREENS:Screen[]=["welcome","signupPhone","verify","pinSignup","signin",
   "purpose","for","relation","chat","chatPhoto","recording","done","review",
-  "explore","interests","profile","paused"];
+  "explore","interests","profile","paused","biodata","enrich"];
 const sampleProfile:any={
   schema_version:"1.0.0",
   registration:{preferred_language:"roman",preferred_script:"roman",looking_for:"bride",
@@ -120,6 +122,13 @@ function App(){
   const [editPath,setEditPath]=useState("");
   const [editValue,setEditValue]=useState("");
   const [previewIndex,setPreviewIndex]=useState(0);
+  const [biodataUri,setBiodataUri]=useState<string|null>(null);
+  const [biodataFileUri,setBiodataFileUri]=useState<string|null>(null);
+  const [biodataFileName,setBiodataFileName]=useState("ABC-Biodata.jpg");
+  const [extraPath,setExtraPath]=useState("");
+  const [extraValue,setExtraValue]=useState("");
+  const [extraBack,setExtraBack]=useState<"done"|"profile">("done");
+  const [biodataBack,setBiodataBack]=useState<"done"|"profile">("done");
   const scrollRef=useRef<ScrollViewInstance|null>(null);
   const recorder=useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recording=screen==="recording";
@@ -264,13 +273,15 @@ function App(){
       await api("/abc/photo",{method:"POST",body:{base64:item.base64,mime}});
       setImage("data:"+mime+";base64,"+item.base64);
       setPhotoSaved(true);
-      await refreshSession();
+      const state=await api<{session:Session}>("/abc/state");
+      setSession(state.session);
     });
   }
   async function deletePhoto(){
     if(PREVIEW){setImage(null);setPhotoSaved(false);return;}
     await task(async()=>{await api("/abc/photo",{method:"DELETE"});
-      setImage(null);setPhotoSaved(false);await refreshSession();});
+      setImage(null);setPhotoSaved(false);
+      const state=await api<{session:Session}>("/abc/state");setSession(state.session);});
   }
   async function openPhoto(){
     if(PREVIEW)return;
@@ -279,6 +290,78 @@ function App(){
       setImage(value.dataUri);setPhotoSaved(Boolean(value.dataUri));
     }catch{/* Photo is optional. */}
   }
+
+  function optionalSelect(field:ExtraField){
+    setExtraPath(field.path);
+    const value=field.path?readAt(session?.profile||account?.profile,field.path):"";
+    setExtraValue(Array.isArray(value)?value.join(", "):value==null?"":String(value));
+  }
+  function openExtras(back:"done"|"profile"){
+    setExtraBack(back);setExtraPath("");setExtraValue("");setScreen("enrich");
+  }
+  async function saveExtra(){
+    if(!extraPath||!session)return;
+    if(PREVIEW){setExtraPath("");return;}
+    await task(async()=>{
+      const value=extraPath==="partner_preferences.preferred_cities_or_regions"?
+        extraValue.split(",").map(x=>x.trim()).filter(Boolean):extraValue.trim();
+      const result=await api<{session:Session}>("/abc/enrichment",{method:"POST",body:{
+        path:extraPath,value,version:session.version
+      }});
+      setSession(result.session);setExtraPath("");setExtraValue("");
+      await refreshAccount();
+      setScreen("enrich");
+    });
+  }
+  async function openBiodata(back:"done"|"profile"){
+    setBiodataBack(back);
+    if(PREVIEW){setScreen("biodata");return;}
+    await task(async()=>{
+      // A relative's profile must be confirmed before it is exported.
+      if(session?.phase==="REVIEW"){
+        const result=await api<{session:Session}>("/abc/review",{method:"POST",body:{
+          confirmed:true,candidateConsent:session.profile.registration.profile_for==="self"||consent
+        }});
+        setSession(result.session);
+      }
+      const img=await api<{mimeType:string;filename:string;width:number;height:number;base64:string}>("/abc/biodata");
+      if(img.mimeType!=="image/jpeg"||!img.base64||img.width!==1200||img.height!==1800)
+        throw Error("The biodata image was not generated. / Biodata tasveer nahi bani.");
+      const safeName=String(readAt(session?.profile||account?.profile,"candidate.full_name")||"Candidate")
+        .replace(/[^A-Za-z0-9 ]/g,"").trim().replace(/\s+/g,"-").slice(0,36);
+      const filename="ABC-Biodata-"+(safeName||"Candidate")+".jpg";
+      const file=new File(Paths.document,filename);
+      await file.write(img.base64,{encoding:"base64"});
+      setBiodataUri("data:image/jpeg;base64,"+img.base64);
+      setBiodataFileUri(file.uri);setBiodataFileName(filename);
+      setScreen("biodata");
+    });
+  }
+  async function saveBiodata(){
+    if(PREVIEW){Alert.alert("Preview","Saving is enabled in the real app.");return;}
+    if(!biodataFileUri)return;
+    await task(async()=>{
+      if(Platform.OS==="android"){
+        const folder=await Directory.pickDirectoryAsync();
+        if(!folder)return;
+        const source=new File(biodataFileUri);
+        await source.copy(new File(folder,biodataFileName));
+        Alert.alert("JPEG saved / Save ho gaya","Your ABC biodata is saved in the selected folder.");
+      }else{
+        if(await Sharing.isAvailableAsync())
+          await Sharing.shareAsync(biodataFileUri,{mimeType:"image/jpeg",dialogTitle:"Save ABC biodata"});
+      }
+    });
+  }
+  async function shareBiodata(){
+    if(PREVIEW){Alert.alert("Preview","Sharing is enabled in the real app.");return;}
+    if(!biodataFileUri)return;
+    await task(async()=>{
+      if(!await Sharing.isAvailableAsync())throw Error("Sharing is unavailable on this phone.");
+      await Sharing.shareAsync(biodataFileUri,{mimeType:"image/jpeg",dialogTitle:"Share ABC biodata"});
+    });
+  }
+
   async function completeInterview(){
     if(PREVIEW){setScreen("explore");return;}
     await task(async()=>{
@@ -332,7 +415,7 @@ function App(){
       if(editPath==="candidate.languages")v=JSON.parse(editValue);
       const d=await api<{session:Session}>("/abc/edit",{method:"POST",body:{path:editPath,value:v}});
       setEditPath("");setEditValue("");goState(d.session);
-      if(d.session.phase==="REVIEW")setScreen("review");
+      if(d.session.phase==="REVIEW"||d.session.phase==="COMPLETE")setScreen("review");
     });
   }
   function edit(path:string){
@@ -536,6 +619,10 @@ function App(){
           </View>)}
         </View>
         <View style={{height:18}}/>
+        <Btn en="Download Bio Data" roman="Biodata JPEG banayein" onPress={()=>void openBiodata("profile")}/>
+        <View style={{height:12}}/>
+        <Btn secondary en="Add More Details" roman="Aur jaankari dein" onPress={()=>openExtras("profile")}/>
+        <View style={{height:18}}/>
         <Btn secondary en="Sign out" roman="Logout karein" onPress={()=>void logout()}/>
         <View style={{height:20}}/>
         <Text style={[st.note,{textAlign:"center"}]}>
@@ -654,7 +741,18 @@ function App(){
         <Btn en="Explore Rishte" roman="Rishte dekhein" disabled={forRelative&&!consent} onPress={()=>void completeInterview()}/>
         <View style={{height:12}}/>
         <Btn en="Check my answers" roman="Jawaab dekh lein" secondary onPress={()=>setScreen("review")}/>
+        <View style={{height:12}}/>
+        <Btn en="Download Bio Data" roman="Biodata JPEG banayein" secondary
+          disabled={busy||(forRelative&&!consent)} onPress={()=>void openBiodata("done")}/>
+        <View style={{height:12}}/>
+        <Btn en="Add More Details" roman="Aur jaankari dein" secondary onPress={()=>openExtras("done")}/>
       </View></View>;
+    if(screen==="biodata")return <BiodataScreen jpegUri={biodataUri} profile={profile}
+      photoUri={image} busy={busy} onBack={()=>setScreen(biodataBack)}
+      onSave={()=>void saveBiodata()} onShare={()=>void shareBiodata()}/>;
+    if(screen==="enrich")return <EnrichmentScreen profile={profile} busy={busy} selected={extraPath}
+      value={extraValue} setValue={setExtraValue} select={optionalSelect}
+      onSave={()=>void saveExtra()} onBack={()=>setScreen(extraBack)}/>;
     if(screen==="review")return reviewPage();
     if(screen==="explore")return showExplore();
     if(screen==="interests")return interestsScreen();

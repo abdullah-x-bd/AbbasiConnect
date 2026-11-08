@@ -1,4 +1,4 @@
-import { FIELDS, type ChatMessage, type FieldDef, type FieldStates, type Lang, type Profile } from "./fields.js";
+import { FIELDS, nextQuestion, CORE_GROUPS, type ChatMessage, type FieldDef, type FieldStates, type Lang, type Profile } from "./fields.js";
 
 const DEFAULT_MODEL="google/gemini-3.1-flash-lite";
 const URL="https://openrouter.ai/api/v1";
@@ -98,6 +98,8 @@ function contextPayload(ctx:Context){
     CURRENT_PROFILE_JSON:ctx.profile,
     FIELD_STATES:ctx.fieldStates,
     CURRENT_QUESTION:ctx.currentQuestion,
+    CURRENT_GROUP_TARGETS:nextQuestion(ctx.profile,ctx.fieldStates)?.targetPaths||[],
+    CORE_QUESTION_GROUPS:CORE_GROUPS.map(g=>({id:g.id,paths:g.paths})),
     FIELD_DEFINITIONS:FIELDS.map(({path,kind,required,allowUnknown,label})=>({path,kind,required,allowUnknown,label})),
     RECENT_RELEVANT_CONVERSATION:ctx.recent.slice(-8),
     PREFERRED_LANGUAGE:ctx.language
@@ -129,7 +131,8 @@ export async function interview(params:{
 }):Promise<Talk>{
   const {ctx,next,directive,validationIssue,latestUserMessage}=params;
   const payload={...contextPayload(ctx),BACKEND_DIRECTIVE:directive,VALIDATION_ISSUE:validationIssue,
-    NEXT_QUESTION:next?{id:next.path,text:next.ask[ctx.language],required:next.required}:null,
+    NEXT_QUESTION:next?{id:next.path,text:next.ask.en+" / "+next.ask.roman,
+      target_fields:next.targetPaths||[next.path],required:next.required}:null,
     LATEST_USER_MESSAGE:latestUserMessage};
   try{
     const out:any=await completion(INTERVIEWER_PROMPT,JSON.stringify(payload),"abc_interviewer",talkSchema,250);
