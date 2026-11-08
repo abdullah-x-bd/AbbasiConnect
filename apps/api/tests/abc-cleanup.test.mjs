@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {cleanProfileValue} from "../src/abc/llm.ts";
+import {cleanProfileValue,extract} from "../src/abc/llm.ts";
+import {freshProfile,freshStates} from "../src/abc/fields.ts";
 
 test("already Roman interview values pass without invoking Gemini",async()=>{
   const originalFetch=globalThis.fetch;
@@ -70,5 +71,40 @@ test("voice cleanup uses the inexpensive model even when the interviewer uses a 
     if(oldKey===undefined)delete process.env.OPENROUTER_API_KEY;else process.env.OPENROUTER_API_KEY=oldKey;
     if(oldModel===undefined)delete process.env.ABC_OPENROUTER_MODEL;else process.env.ABC_OPENROUTER_MODEL=oldModel;
     if(oldCleanup===undefined)delete process.env.ABC_CLEANUP_MODEL;else process.env.ABC_CLEANUP_MODEL=oldCleanup;
+  }
+});
+
+test("out-of-order degree and profession survive a first pass marked INVALID",async()=>{
+  const beforeFetch=globalThis.fetch,oldKey=process.env.OPENROUTER_API_KEY;
+  let calls=0;
+  try{
+    process.env.OPENROUTER_API_KEY="test-key";
+    globalThis.fetch=async(_url,options)=>{
+      calls++;
+      const request=JSON.parse(options.body);
+      const input=JSON.parse(request.messages[1].content);
+      if(calls===2){
+        assert.equal(input.CURRENT_QUESTION,null);
+        assert.equal(input.CURRENT_GROUP_TARGETS.length,0);
+      }
+      const data=calls===1?
+        {classification:"INVALID",changes:[],declined_fields:[],unknown_fields:[],clarification:"",off_topic:false}:
+        {classification:"VALID",changes:[
+          {path:"candidate.education.highest_qualification",value_json:"Bachelor's degree",evidence:"bachelor's degree",confidence:"HIGH"},
+          {path:"candidate.occupation.profession_or_role",value_json:"software engineer",evidence:"software engineer",confidence:"HIGH"}
+        ],declined_fields:[],unknown_fields:[],clarification:"",off_topic:false};
+      return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(data)}}]}),{status:200});
+    };
+    const result=await extract({profile:freshProfile(),fieldStates:freshStates(),
+      currentQuestion:"candidate.full_name",recent:[],language:"en"},
+      "I have a bachelor's degree and work as a software engineer.");
+    assert.equal(calls,2);
+    assert.equal(result.classification,"VALID");
+    assert.deepEqual(result.changes.map(c=>c.path).sort(),[
+      "candidate.education.highest_qualification","candidate.occupation.profession_or_role"
+    ]);
+  }finally{
+    globalThis.fetch=beforeFetch;
+    if(oldKey===undefined)delete process.env.OPENROUTER_API_KEY;else process.env.OPENROUTER_API_KEY=oldKey;
   }
 });
