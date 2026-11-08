@@ -31,7 +31,7 @@ test("biodata renders genuine WhatsApp-ready 1080 x 1350 JPEG",async()=>{
   assert.equal(metadata.width,BIODATA_WIDTH);
   assert.equal(metadata.height,BIODATA_HEIGHT);
   assert.ok(bytes.length>10000);
-  for(const phrase of ["Faizan Ali","Aligarh","Ahmed Ali","Fatima Ali","Abbasi Bahishti Connections","Age / Umar","Height / Qad","City / Shehar","Education / Taleem","Father's education / Walid ki taleem","Prepared by ABC Abbasi Bahishti Connections"]){
+  for(const phrase of ["Faizan Ali","Aligarh","Ahmed Ali","Fatima Ali","Abbasi Bahishti Connections","Age / Umar","Height / Qad","City / Shehar","Education / Taleem","Father&apos;s education / Walid ki taleem","Prepared by ABC Abbasi Bahishti Connections"]){
     assert.ok(biodataSvg(p).toLowerCase().includes(phrase.toLowerCase()),"missing "+phrase);
   }
 });
