@@ -133,6 +133,7 @@ function App(){
   const [extraPath,setExtraPath]=useState("");
   const [extraValue,setExtraValue]=useState("");
   const [extraUncertain,setExtraUncertain]=useState(false);
+  const [extraPreviewToken,setExtraPreviewToken]=useState("");
   const [extraRecording,setExtraRecording]=useState(false);
   const [deletePin,setDeletePin]=useState("");
   const [extraBack,setExtraBack]=useState<"done"|"profile">("done");
@@ -325,15 +326,15 @@ function App(){
     setExtraPath(field.path);
     const existing=readAt(session?.profile||account?.profile,field.path);
     setExtraValue(Array.isArray(existing)?existing.join(", "):existing==null?"":String(existing));
-    setExtraUncertain(false);setExtraRecording(false);
+    setExtraUncertain(false);setExtraPreviewToken("");setExtraRecording(false);
     setScreen("enrichEdit");
   }
   function openExtras(back:"done"|"profile"){
     setExtraBack(back);setExtraPath("");setExtraValue("");
-    setExtraUncertain(false);setScreen("enrich");
+    setExtraUncertain(false);setExtraPreviewToken("");setScreen("enrich");
   }
   function cancelExtra(){
-    setExtraPath("");setExtraValue("");setExtraUncertain(false);
+    setExtraPath("");setExtraValue("");setExtraUncertain(false);setExtraPreviewToken("");
     setScreen("enrich");
   }
   async function toggleExtraVoice(){
@@ -345,10 +346,13 @@ function App(){
         if(!recorder.uri)throw Error("No recording was captured.");
         const data=await new File(recorder.uri).base64();
         if(data.length>1200000)throw Error("Please speak for a shorter time.");
-        const result=await api<{text:string;uncertain?:boolean}>("/abc/audio/transcribe",{
-          method:"POST",body:{data,format:"m4a"}
+        const freshVoiceAnswer=!extraValue.trim();
+        const result=await api<{text:string;uncertain?:boolean;previewToken?:string}>("/abc/audio/transcribe",{
+          method:"POST",body:{data,format:"m4a",...(freshVoiceAnswer?{path:extraPath}:{})}
         });
         setExtraValue(old=>old.trim()?old.trim()+" "+result.text:result.text);
+        // A clean, untouched voice answer is saved verbatim with its signed review token.
+        setExtraPreviewToken(freshVoiceAnswer?(result.previewToken||""):"");
         setExtraUncertain(Boolean(result.uncertain));
       });
       return;
@@ -369,10 +373,10 @@ function App(){
       const value=extraPath==="partner_preferences.preferred_cities_or_regions"?
         extraValue.split(",").map(x=>x.trim()).filter(Boolean):extraValue.trim();
       const result=await api<{session:Session}>("/abc/enrichment",{method:"POST",body:{
-        path:extraPath,value,version:session.version
+        path:extraPath,value,version:session.version,...(extraPreviewToken?{previewToken:extraPreviewToken}:{})
       }});
       setSession(result.session);
-      setExtraPath("");setExtraValue("");setExtraUncertain(false);
+      setExtraPath("");setExtraValue("");setExtraUncertain(false);setExtraPreviewToken("");
       await refreshAccount();
       setScreen("enrich");
     });
@@ -896,7 +900,7 @@ function App(){
       field={EXTRA_FIELDS.find(x=>x.path===extraPath)||EXTRA_FIELDS[0]}
       value={extraValue} busy={busy} recording={extraRecording}
       uncertain={extraUncertain}
-      onChange={setExtraValue}
+      onChange={value=>{setExtraValue(value);setExtraPreviewToken("");}}
       onMic={()=>void toggleExtraVoice()}
       onSave={()=>void saveExtra()} onCancel={cancelExtra}/>;
     if(screen==="review")return reviewPage();
