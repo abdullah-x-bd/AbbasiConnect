@@ -33,7 +33,7 @@ test("every completed answer gets an idempotency identifier and verified next qu
   assert.match(backend,/turnKey&&d\.declines\[turnKey\]===1/);
   assert.match(backend,/if\(turnKey\)declines\[turnKey\]=1/);
   assert.match(voice,/currentQuestionText/);
-  assert.doesNotMatch(voice,/messages\\.at/);
+  assert.doesNotMatch(voice,/messages[.]at/);
   assert.match(backend,/currentQuestionText/);
 });
 test("text chat still offers microphone but never reads chat bubbles aloud",()=>{
