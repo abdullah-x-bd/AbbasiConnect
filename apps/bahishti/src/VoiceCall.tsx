@@ -206,7 +206,13 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
       // Do not invent a saved answer or silently skip this question.
       notifySpeech("The answer could not be saved. Please ask the person to repeat their last answer.",
         pending.id.startsWith("local_")?null:pending.id);
-    }finally{busyRef.current=false;}
+    }finally{
+      busyRef.current=false;
+      // A user may continue speaking while the previous answer is validated.
+      // Process that pending turn instead of silently discarding it.
+      if(activeRef.current&&pendingRef.current)
+        timerRef.current=setTimeout(()=>void flushDelegation(),320);
+    }
   }
   function handleLiveEvent(raw:string){
     if(!activeRef.current)return;
@@ -245,8 +251,12 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
         if(timerRef.current)clearTimeout(timerRef.current);
         timerRef.current=setTimeout(()=>void flushDelegation(),300);
       }
-      if(lastSpeechEndRef.current>lastCutRef.current&&!pendingRef.current)
-        scheduleTurnFallback(lastSpeechEndRef.current);
+      // GPT-Live transcript fragments contain reliable audio timestamps.
+      // Use a debounced transcript fallback even when the provider does not
+      // emit a VAD speech_stopped event for a particular device/session.
+      const lastTimestamp=Math.max(Number(msg.end_ms)||0,lastSpeechEndRef.current);
+      if(lastTimestamp>lastCutRef.current&&!pendingRef.current)
+        scheduleTurnFallback(lastTimestamp);
       return;
     }
     if(msg.type==="session.delegation.created"&&msg.delegation?.target==="client"){
