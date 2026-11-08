@@ -20,9 +20,9 @@ try{
   let created=await request("/abc/start","POST",{},201);
   sessionToken=created.token;sessions.push(sessionToken);
   assert.equal(created.session.profile.candidate.full_name,null);
-  for(const [field,value] of [["preferred_language","en"],["looking_for","bride"],["profile_for","self"]]){
+  for(const [field,value] of [["preferred_language","en"],["looking_for","bride"],["profile_for","self"],["marital_status","never married"]]){
     const data=await request("/abc/choice","POST",{field,value});
-    assert.equal(data.session.profile.registration[field],value);
+    assert.equal(field==="marital_status"?data.session.profile.candidate.marital_status:data.session.profile.registration[field],value);
   }
   const before=(await request("/abc/state")).session;
   assert.equal(before.currentQuestion,"candidate.full_name");
@@ -44,19 +44,24 @@ try{
   }else console.log("SKIP live AI: Render model key unavailable");
   created=await request("/abc/start","POST",{},201);
   sessionToken=created.token;sessions.push(sessionToken);
-  for(const [field,value] of [["preferred_language","en"],["looking_for","groom"],["profile_for","self"]])
+  for(const [field,value] of [["preferred_language","en"],["looking_for","groom"],["profile_for","self"],["marital_status","never married"]])
     await request("/abc/choice","POST",{field,value});
   const state=(await request("/abc/state")).session;
   const first=await request("/abc/skip","POST",{version:state.version});
   assert.equal(first.session.phase,"COLLECTING");
   const second=await request("/abc/skip","POST",{version:first.session.version});
-  assert.equal(second.session.phase,"BLOCKED_REQUIRED");
-  const resumed=await request("/abc/resume","POST",{});
-  assert.equal(resumed.session.phase,"COLLECTING");
-  console.log("PASS mandatory-answer refusal and resume state machine");
+  assert.equal(second.session.phase,"COLLECTING");
+  const third=await request("/abc/skip","POST",{version:second.session.version});
+  assert.equal(third.session.phase,"COLLECTING");
+  assert.notEqual(third.session.currentQuestion,"candidate.full_name");
+  assert.ok(third.session.missingRequired.includes("candidate.full_name"));
+  assert.ok(third.session.progress<100);
+  const persisted=(await request("/abc/state")).session;
+  assert.equal(persisted.currentQuestion,third.session.currentQuestion);
+  console.log("PASS three refused replies defer the required field without marking it complete");
   created=await request("/abc/start","POST",{},201);
   sessionToken=created.token;sessions.push(sessionToken);
-  for(const [field,value] of [["preferred_language","en"],["looking_for","bride"],["profile_for","self"]])
+  for(const [field,value] of [["preferred_language","en"],["looking_for","bride"],["profile_for","self"],["marital_status","never married"]])
     await request("/abc/choice","POST",{field,value});
   const values={
     "candidate.full_name":"ABC Test Candidate",
