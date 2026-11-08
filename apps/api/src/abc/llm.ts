@@ -153,21 +153,44 @@ export async function extract(ctx:Context,message:string):Promise<Extracted>{
   const raw:any=await completion(EXTRACTION_PROMPT,JSON.stringify({...contextPayload(ctx),LATEST_USER_MESSAGE:message}),"abc_extraction",extractorSchema,1150,true);
   if(!raw||!CLASSIFICATIONS.includes(raw.classification)||!Array.isArray(raw.changes)||!Array.isArray(raw.declined_fields)||!Array.isArray(raw.unknown_fields))throw new Error("Invalid extraction response");
   const changes=raw.changes.filter((x:any)=>x&&typeof x.path==="string"&&typeof x.value_json==="string"&&typeof x.evidence==="string"&&["HIGH","MEDIUM","LOW"].includes(x.confidence)).slice(0,35);
-  // Independently re-read the message if the first pass missed the current question.
-  // This focused pass cannot authorize new fields; the backend still validates every proposal.
-  if(ctx.currentQuestion&&!changes.some((x:ProposedChange)=>x.path===ctx.currentQuestion)&&!raw.off_topic&&!["DECLINED","UNKNOWN","OFF_TOPIC","INVALID","PARTIALLY_OFF_TOPIC","PAUSE","STOP"].includes(raw.classification)){
+  // An answer may intentionally give education, work, location or other facts
+  // BEFORE those questions are asked. The first pass must not be allowed to
+  // discard such facts just because CURRENT_QUESTION was not answered.
+  const educationCue=/\b(degree|bachelor|master|btech|bsc|mba|studied|study|education|university|college|graduate|qualification|taleem|padhai)\b/i.test(message);
+  const workCue=/\b(work|working|job|profession|engineer|teacher|doctor|employed|employment|company|employer|infosys|business|naukri|kaam|karobar)\b/i.test(message);
+  const missingEducation=educationCue&&!changes.some((x:ProposedChange)=>x.path.startsWith("candidate.education."));
+  const missingWork=workCue&&!changes.some((x:ProposedChange)=>x.path.startsWith("candidate.occupation."));
+  const firstHadNone=changes.length===0;
+  const recoverable=!["DECLINED","UNKNOWN","PAUSE","STOP"].includes(raw.classification);
+  const mustRecheck=recoverable&&(firstHadNone||missingEducation||missingWork);
+  let classification:Classification=raw.classification,offTopic=Boolean(raw.off_topic);
+  if(mustRecheck){
     try{
       const second:any=await completion(EXTRACTION_PROMPT,JSON.stringify({
-        ...contextPayload(ctx),LATEST_USER_MESSAGE:message,PRIOR_EXTRACTION_FIELDS:changes.map((x:ProposedChange)=>x.path),
-        MANDATORY_RECHECK:"The first extraction missed the CURRENT_QUESTION. Re-read the exact answer and all other explicitly given facts; propose all missing paths, quote verbatim evidence. Never guess."
-      }),"abc_extraction_recheck",extractorSchema,1150,true);
+        ...contextPayload(ctx),
+        // The second pass deliberately has no target question. Otherwise the
+        // model may reject genuine facts supplied out of the questionnaire order.
+        CURRENT_QUESTION:null,CURRENT_GROUP_TARGETS:[],
+        LATEST_USER_MESSAGE:message,PRIOR_EXTRACTION_FIELDS:changes.map((x:ProposedChange)=>x.path),
+        MANDATORY_RECHECK:"Independently examine the ENTIRE message for any stated matrimonial profile fact, EVEN IF IT DOES NOT ANSWER THE QUESTION THAT WAS ASKED. Education, institution, profession and employer may all be supplied together. Classify VALID if any relevant fact is present. Extract every supported missing field with an exact quotation from the message. Do not invent facts or treat unrelated information as profile data."
+      }),"abc_extraction_all_facts",extractorSchema,1500,true);
+      let added=0;
       if(Array.isArray(second?.changes))for(const x of second.changes){
-        if(x&&typeof x.path==="string"&&typeof x.value_json==="string"&&typeof x.evidence==="string"&&["HIGH","MEDIUM","LOW"].includes(x.confidence)&&!changes.some((item:ProposedChange)=>item.path===x.path))changes.push(x);
+        if(x&&typeof x.path==="string"&&typeof x.value_json==="string"&&typeof x.evidence==="string"&&
+          ["HIGH","MEDIUM","LOW"].includes(x.confidence)&&!changes.some((item:ProposedChange)=>item.path===x.path)){
+          changes.push(x);added++;
+        }
       }
-    }catch{/* First validated pass remains authoritative if retry fails. */}
+      if(added>0&&CLASSIFICATIONS.includes(second.classification)){
+        classification=second.classification;
+        offTopic=Boolean(second.off_topic);
+      }
+    }catch{/* Never lose the first extraction merely because recovery failed. */}
   }
-  return {classification:raw.classification,changes,declined_fields:raw.declined_fields.filter((x:any)=>typeof x==="string"),
-    unknown_fields:raw.unknown_fields.filter((x:any)=>typeof x==="string"),clarification:String(raw.clarification||"").slice(0,280),off_topic:Boolean(raw.off_topic)};
+  return {classification,changes:changes.slice(0,35),
+    declined_fields:raw.declined_fields.filter((x:any)=>typeof x==="string"),
+    unknown_fields:raw.unknown_fields.filter((x:any)=>typeof x==="string"),
+    clarification:String(raw.clarification||"").slice(0,280),off_topic:offTopic};
 }
 export async function interview(params:{
   ctx:Context;next:FieldDef|null;directive:"ASK"|"RETRY"|"REQUIRED_REFUSAL"|"READY"|"PAUSE"|"BLOCKED";
