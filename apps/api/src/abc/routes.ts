@@ -12,7 +12,7 @@ import { extract,interview,openRouterConfigured,transcribeAudio,cleanProfileValu
 import { renderBiodataJpeg,BIODATA_WIDTH,BIODATA_HEIGHT } from "./biodata.js";
 import {
   VOICE_MAX_DURATION_MS,VOICE_STARTED_KEY,VOICE_ALLOWED_OFF_TOPIC,
-  unrelatedCount,countVoiceReply,voiceCallExpired
+  unrelatedCount,countVoiceReply,voiceCallExpired,isVoiceRepeatRequest
 } from "./voice-policy.js";
 
 const PHONE=/^\+[1-9]\d{7,14}$/;
@@ -298,6 +298,16 @@ export async function registerAbcRoutes(app:FastifyInstance){
     if(d.messages.length>=MAX_MESSAGES)return reply.code(429).send({error:"Interview limit reached. Please contact support."});
     if(!throttle("abc-reply:"+d.id,14,60*1000))return reply.code(429).send({error:"Too many replies. Please wait a moment."});
     const lang=getLanguage(d.profile),userText=body.data.text;
+    if(d.profile.registration.onboarding_mode==="voice"&&isVoiceRepeatRequest(userText)){
+      // Repeat requests are legitimate interviewing controls, not distractions.
+      // Preserve the current question without sending an extra extraction call.
+      const def=FIELD_MAP.get(d.currentQuestion);
+      const question=def?.ask[lang]||"Please answer the current profile question.";
+      const saved=await store(d,{messages:safeHistory([...d.messages,
+        note("user",userText,d.currentQuestion),note("assistant",shortMessage(question),d.currentQuestion)])});
+      return {session:client(saved),changesAccepted:0,classification:"REPEAT",
+        voiceDistractionCount:unrelatedCount(d.declines),voiceTermination:null};
+    }
     const context={profile:d.profile,fieldStates:d.fieldStates,currentQuestion:d.currentQuestion,recent:d.messages,language:lang};
     let extracted;
     try{extracted=await extract(context,userText);}

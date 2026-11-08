@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   VOICE_MAX_DURATION_MS,VOICE_SILENCE_WARNING_MS,VOICE_SILENCE_END_MS,
   VOICE_ALLOWED_OFF_TOPIC,VOICE_STARTED_KEY,VOICE_UNRELATED_KEY,
-  isVoiceDistraction,unrelatedCount,countVoiceReply,voiceCallExpired
+  isVoiceDistraction,isVoiceRepeatRequest,unrelatedCount,countVoiceReply,voiceCallExpired
 } from "../src/abc/voice-policy.ts";
 
 test("four-minute hard limit and thirty-second silence cutoff",()=>{
@@ -49,4 +49,16 @@ test("unrelated counter cannot be accidentally reset by unrelated field declines
   const result=countVoiceReply(state,{classification:"UNKNOWN",off_topic:false});
   assert.equal(result.next["family.father.profession"],3);
   assert.equal(result.count,2);
+});
+
+test("polite repeat requests in either language never incur unrelated strikes",()=>{
+  for(const utterance of ["Repeat that","Please repeat the question",
+    "Could you repeat that?","Say that again.","Dobara batayein",
+    "Samajh nahi aaya","Kya kaha?"]){
+    assert.equal(isVoiceRepeatRequest(utterance),true,utterance);
+  }
+  for(const utterance of ["Tell me a joke","Explain the news",
+    "Repeat the question and then tell me a story","Tell me about OpenAI"]){
+    assert.equal(isVoiceRepeatRequest(utterance),false,utterance);
+  }
 });

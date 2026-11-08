@@ -13,6 +13,11 @@ export type VoiceClassification={
 
 // Do not punish a refused question, an unknown answer, a correct answer, or
 // recognition noise labeled INVALID. Count only genuinely unrelated requests.
+// Requests to repeat an ABC question are on-topic and must not use a strike.
+export function isVoiceRepeatRequest(text:string):boolean{
+  const input=text.toLowerCase().replace(/[.!?।؟]+/g,"").trim().replace(/\s+/g," ");
+  return /^(please )?(repeat( that| the question| it)?|say (that|it|the question) again|ask (that|the question) again|what was the question|can you (please )?repeat( that| the question)?|could you (please )?repeat( that| the question)?|can you say that again|i did not hear (you|that)|i didn't hear (you|that)|dobara (boliye|bolen|bataiye|batayein|poochhiye|puchiye)|phir se (boliye|bataiye|batayein|poochhiye|puchiye)|samajh nahi aaya|suna nahi|kya kaha)$/.test(input);
+}
 export function isVoiceDistraction(x:VoiceClassification):boolean{
   return Boolean(x.off_topic)||x.classification==="OFF_TOPIC"||
     x.classification==="PARTIALLY_OFF_TOPIC";

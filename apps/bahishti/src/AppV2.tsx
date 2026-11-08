@@ -121,6 +121,7 @@ function App(){
   const [photoSaved,setPhotoSaved]=useState(false);
   const [recording,setRecording]=useState(false);
   const [voiceUncertain,setVoiceUncertain]=useState(false);
+  const [voiceStopReason,setVoiceStopReason]=useState<"manual"|"silence"|"time_limit"|"connection_lost">("manual");
   const [consent,setConsent]=useState(false);
   const [city,setCity]=useState("");
   const [candidates,setCandidates]=useState<Candidate[]>([]);
@@ -836,15 +837,26 @@ function App(){
       onSession={updated=>{
         setSession(updated);
         if(updated.phase!=="COLLECTING")setScreen(accountPage(updated.phase,updated.profile));
+        else if(updated.profile.registration?.onboarding_mode==="chat"){
+          setError("Voice Call ended after five unrelated replies. Your answers are saved. Continue in Chat.");
+          setScreen("chat");
+        }
       }}
       onSwitchToChat={switchToChat}
-      onEnd={()=>setScreen("voiceStopped")}/>;
+      onEnd={reason=>{setVoiceStopReason(reason||"manual");setScreen("voiceStopped");}}/>;
     if(screen==="voiceStopped")return <View style={st.page}>
       {header("Voice Call",()=>setScreen("mode"),"Awaaz wali baat-cheet")}
       <View style={[st.inner,{justifyContent:"center",paddingBottom:85}]}>
-        <H en="Your answers are saved" roman="Aapke jawaab save ho gaye hain" center/>
+        <H en={voiceStopReason==="silence"?"Call ended after silence":
+          voiceStopReason==="time_limit"?"Four-minute call finished":
+          voiceStopReason==="connection_lost"?"Voice connection ended":"Your answers are saved"}
+          roman={voiceStopReason==="silence"?"Khamoshi par call khatam":
+          voiceStopReason==="time_limit"?"Chaar minute poore ho gaye":"Jawaab save hain"} center/>
         <Text style={[st.sub,{textAlign:"center",marginBottom:28}]}>
-          Resume your call or continue in Chat. Your answers remain saved.
+          {voiceStopReason==="silence"?"There was no speaking for 30 seconds. Your saved answers remain available.":
+            voiceStopReason==="time_limit"?"Your four-minute limit was reached. Your saved answers are safe.":
+            voiceStopReason==="connection_lost"?"The voice connection was interrupted. Your saved answers remain available.":
+            "Resume the call or continue in Chat. Your answers remain saved."}
         </Text>
         <Btn en="Resume Voice Call" roman="Call dobara karein" onPress={()=>setScreen("voice")}/>
         <View style={{height:12}}/>
