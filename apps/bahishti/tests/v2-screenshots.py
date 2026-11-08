@@ -28,10 +28,12 @@ SCREENS=[
     ("15-review","Review and correct information"),
     ("16-explore","Explore Rishte"),
     ("17-interests","Interests inbox"),
-    ("18-profile","My profile"),
-    ("19-paused","Saved conversation and resume"),
-    ("20-biodata","JPEG biodata preview"),
-    ("21-more-details","Optional enrichment editor"),
+    ("18-profile","My profile with account deletion"),
+    ("19-delete-account","PIN-confirmed account deletion"),
+    ("20-paused","Saved conversation and resume"),
+    ("21-biodata","JPEG biodata preview"),
+    ("22-more-details","Optional enrichment list"),
+    ("23-edit-detail","Separate voice and Gemini clean-up editor")
 ]
 def adb(*args,timeout=45):
     p=subprocess.run(["adb",*args],capture_output=True,text=True,timeout=timeout)
@@ -39,9 +41,21 @@ def adb(*args,timeout=45):
     return p.stdout
 
 def dump():
-    adb("shell","uiautomator","dump","/sdcard/abc.xml",timeout=75)
-    adb("pull","/sdcard/abc.xml","abc-v2-screenshots/ui.xml")
-    return list(ET.parse(OUT/"ui.xml").getroot().iter("node"))
+    # Android's Pixel Launcher can briefly show a system ANR dialog after boot,
+    # even while ABC itself is healthy. Recover instead of testing the dialog.
+    for attempt in range(3):
+        adb("shell","uiautomator","dump","/sdcard/abc.xml",timeout=75)
+        adb("pull","/sdcard/abc.xml","abc-v2-screenshots/ui.xml")
+        items=list(ET.parse(OUT/"ui.xml").getroot().iter("node"))
+        if not any("isn't responding" in n.attrib.get("text","") for n in items):
+            return items
+        wait=[n for n in items if n.attrib.get("text","").strip()=="Wait"]
+        if wait:
+            x,y=bounds(wait[-1])
+            adb("shell","input","tap",str(x),str(y))
+        time.sleep(4)
+        adb("shell","am","start","-n","org.abbasiconnect.bahishti/.MainActivity")
+    return items
 def bounds(node):
     v=[int(x) for x in re.findall(r"\d+",node.attrib.get("bounds",""))]
     return (v[0]+v[2])//2,(v[1]+v[3])//2
@@ -51,15 +65,17 @@ EXPECTED=[
  "How should we talk","Looking for a","Whose profile is this","How are you related",
  "Marital status","Conversation","Would you like to add a photo",
  "We have all the details","Your answers","Explore / Rishte",
- "Interests","My profile","Your answers are saved","Your Bio Data","More details"
+ "Interests","Delete my account","Delete your ABC account","Your answers are saved",
+ "Your Bio Data","More details","More about education"
 ]
 def verify_screen(i):
     expected=EXPECTED[i]
-    for attempt in range(7):
+    for attempt in range(15):
         contents=" ".join(n.attrib.get("text","")+" "+n.attrib.get("content-desc","") for n in dump())
         if expected.lower() in contents.lower():return
         time.sleep(1.3)
-    raise AssertionError("Screenshot is not on expected page "+str(i+1)+": "+expected)
+    raise AssertionError("Screenshot is not on expected page "+str(i+1)+": "+expected+
+      " Actual: "+contents[:450])
 
 def next_screen():
     nodes=dump()
@@ -72,8 +88,8 @@ def next_screen():
         adb("shell","input","tap",str(x),str(y))
     time.sleep(1.0)
 adb("shell","am","force-stop","org.abbasiconnect.bahishti")
-adb("shell","monkey","-p","org.abbasiconnect.bahishti","-c","android.intent.category.LAUNCHER","1")
-time.sleep(10)
+adb("shell","am","start","-n","org.abbasiconnect.bahishti/.MainActivity")
+time.sleep(15)
 metadata=[]
 for i,(name,description) in enumerate(SCREENS):
     if i:next_screen()

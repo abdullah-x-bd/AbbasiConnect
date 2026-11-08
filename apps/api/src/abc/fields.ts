@@ -94,8 +94,16 @@ export function setPath(object:Profile,path:string,value:unknown):Profile {
   dst[parts[parts.length-1]]=value;
   return copy;
 }
+// Profile storage uses Latin/Roman script regardless of the language spoken.
+export function hasNonRomanScript(value:unknown):boolean {
+  if(typeof value==="string")return /[^\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(value);
+  if(Array.isArray(value))return value.some(hasNonRomanScript);
+  if(value&&typeof value==="object")return Object.values(value).some(hasNonRomanScript);
+  return false;
+}
 export function normalizeField(path:string,raw:unknown): {ok:true;value:unknown;complete:boolean}|{ok:false;error:string} {
   const def=FIELD_MAP.get(path);if(!def)return {ok:false,error:"Field is not allowed"};
+  if(hasNonRomanScript(raw))return {ok:false,error:"Please use Roman letters for saved profile details"};
   let value:unknown=raw;
   if(typeof raw==="string"){value=raw.trim();if(!value)return {ok:false,error:"Answer was empty"};}
   if(def.kind==="age"||def.kind==="height"||def.kind==="weight"||def.kind==="count"){

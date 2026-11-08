@@ -1,4 +1,4 @@
-name: Publish ABC v1.4 direct APK
+name: Publish ABC v1.5 direct APK
 
 on:
   workflow_run:
@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 25
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: abc-bahishti-v1.4.0
+      TAG: abc-bahishti-v1.5.0
     steps:
       - uses: actions/checkout@v4
       - name: Download APK from this exact successful Android build
@@ -34,15 +34,15 @@ jobs:
           test -n "$RUN_ID"
           gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name ABC-Bahishti-Android-APK --dir abc-apk
           test -s abc-apk/app-release.apk
-          cp abc-apk/app-release.apk ABC-Bahishti-Connections-v1.4.apk
-          file ABC-Bahishti-Connections-v1.4.apk
-          ls -lh ABC-Bahishti-Connections-v1.4.apk
+          cp abc-apk/app-release.apk ABC-Bahishti-Connections-v1.5.apk
+          file ABC-Bahishti-Connections-v1.5.apk
+          ls -lh ABC-Bahishti-Connections-v1.5.apk
       - name: Publish direct-install APK
         run: |
           set -euo pipefail
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" ABC-Bahishti-Connections-v1.4.apk --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$TAG" ABC-Bahishti-Connections-v1.5.apk --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$TAG" ABC-Bahishti-Connections-v1.4.apk --repo "$GITHUB_REPOSITORY" --target main --title "ABC Bahishti Connections v1.4" --notes "ABC v1.4: adaptive seven-group interview, default Hinglish or English choice, inferred gender, marital choice, keyboard-aware Android chat, inline mic transcription with manual Send, tap-to-speak replies, three-irrelevant-response deferral, one-time optional photo offer, early duplicate-number redirect. Existing WhatsApp 1080×1350 JPEG retained. Temporary phone verification remains unchanged." --latest=false
+            gh release create "$TAG" ABC-Bahishti-Connections-v1.5.apk --repo "$GITHUB_REPOSITORY" --target main --title "ABC Bahishti Connections v1.5" --notes "ABC v1.5: voice transcripts and profile JSON normalized to Roman letters, Gemini-reviewed language-preserving optional details with dedicated voice editor, and PIN-confirmed permanent account deletion. Existing ABC v1.4 short interview and WhatsApp biodata remain intact. Aadhaar QR deferred." --latest=false
           fi
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets
