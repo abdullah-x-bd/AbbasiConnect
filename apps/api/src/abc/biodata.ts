@@ -72,9 +72,11 @@ function safeName(raw:unknown):string {
   return value(raw)||"Matrimonial Bio Data";
 }
 function optionalPrefs(profile:Profile):string|null {
+  const age=value(at(profile,"partner_preferences.preferred_age_range"));
+  const cities=value(at(profile,"partner_preferences.preferred_cities_or_regions"));
   const parts=[
-    value(at(profile,"partner_preferences.preferred_age_range")),
-    value(at(profile,"partner_preferences.preferred_cities_or_regions")),
+    age?"Age / Umar: "+age:null,
+    cities?"City / Shehar: "+cities:null,
     value(at(profile,"partner_preferences.education_preference")),
     value(at(profile,"partner_preferences.profession_preference")),
     value(at(profile,"partner_preferences.other_preferences"))
