@@ -3,12 +3,13 @@ import assert from "node:assert/strict";
 import {
   VOICE_MAX_DURATION_MS,VOICE_SILENCE_WARNING_MS,VOICE_SILENCE_END_MS,
   VOICE_ALLOWED_OFF_TOPIC,VOICE_STARTED_KEY,VOICE_UNRELATED_KEY,
-  isVoiceDistraction,isVoiceRepeatRequest,unrelatedCount,countVoiceReply,voiceCallExpired
+  isVoiceDistraction,isVoiceRepeatRequest,unrelatedCount,countVoiceReply,voiceCallExpired,
+  voiceNoAnswerDecision,VOICE_WAIT_FOR_SPEECH_MS,VOICE_WAIT_STARTED_KEY,VOICE_NO_ANSWER_KEY
 } from "../src/abc/voice-policy.ts";
 
 test("four-minute hard limit and thirty-second silence cutoff",()=>{
   assert.equal(VOICE_MAX_DURATION_MS,240000);
-  assert.equal(VOICE_SILENCE_WARNING_MS,20000);
+  assert.equal(VOICE_SILENCE_WARNING_MS,15000);
   assert.equal(VOICE_SILENCE_END_MS,30000);
   assert.ok(VOICE_SILENCE_WARNING_MS<VOICE_SILENCE_END_MS);
   const started=1000000;
@@ -61,4 +62,14 @@ test("polite repeat requests in either language never incur unrelated strikes",(
     "Repeat the question and then tell me a story","Tell me about OpenAI"]){
     assert.equal(isVoiceRepeatRequest(utterance),false,utterance);
   }
+});
+
+test("15-second waiting state repeats once then pauses without asking forever",()=>{
+  const now=1000000;
+  assert.equal(VOICE_WAIT_FOR_SPEECH_MS,15000);
+  const waiting={[VOICE_WAIT_STARTED_KEY]:now,[VOICE_NO_ANSWER_KEY]:0};
+  assert.equal(voiceNoAnswerDecision(waiting,now+14200),"too_soon");
+  assert.equal(voiceNoAnswerDecision(waiting,now+14400),"repeat");
+  assert.equal(voiceNoAnswerDecision({...waiting,[VOICE_NO_ANSWER_KEY]:1},now+15000),"end");
+  assert.equal(voiceNoAnswerDecision({},now+30000),"too_soon");
 });

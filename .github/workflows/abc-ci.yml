@@ -2,7 +2,7 @@ name: ABC Bahishti quality checks
 
 on:
   push:
-    branches: [main, "feature/abc-biodata-whatsapp-v13", "feature/abc-onboarding-surgical-v14", "feature/abc-roman-cleanup-enrichment-delete-v15", "feature/abc-ivory-forest-brand-v16", "feature/abc-auto-cheap-voice-cleanup-v161", "feature/abc-gpt-live-voice-onboarding-v17", "feature/abc-voice-guardrails-v171", "feature/abc-biodata-contact-v162"]
+    branches: [main, "feature/abc-biodata-whatsapp-v13", "feature/abc-onboarding-surgical-v14", "feature/abc-roman-cleanup-enrichment-delete-v15", "feature/abc-ivory-forest-brand-v16", "feature/abc-auto-cheap-voice-cleanup-v161", "feature/abc-gpt-live-voice-onboarding-v17", "feature/abc-voice-guardrails-v171", "feature/abc-voice-turntaking-v18", "feature/abc-biodata-contact-v162"]
     paths:
       - "apps/api/src/abc/**"
       - "apps/api/tests/abc-fields.test.mjs"
@@ -61,5 +61,7 @@ jobs:
         run: node --test apps/bahishti/tests/brand-theme.test.mjs
       - name: Validate voice-call limits, delegation fallback, and text-only Chat
         run: node --test apps/bahishti/tests/voice-guardrails.test.mjs
+      - name: Test voice transcript buffering and WebRTC audio levels
+        run: node --import tsx --test apps/bahishti/tests/voice-turns.test.mjs
       - name: Typecheck ABC Android app
         run: npm run typecheck -w @abbasiconnect/bahishti
