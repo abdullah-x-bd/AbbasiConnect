@@ -111,7 +111,7 @@ export async function extract(ctx:Context,message:string):Promise<Extracted>{
   const changes=raw.changes.filter((x:any)=>x&&typeof x.path==="string"&&typeof x.value_json==="string"&&typeof x.evidence==="string"&&["HIGH","MEDIUM","LOW"].includes(x.confidence)).slice(0,35);
   // Independently re-read the message if the first pass missed the current question.
   // This focused pass cannot authorize new fields; the backend still validates every proposal.
-  if(ctx.currentQuestion&&!changes.some((x:ProposedChange)=>x.path===ctx.currentQuestion)&&!["DECLINED","UNKNOWN","OFF_TOPIC","PAUSE","STOP"].includes(raw.classification)){
+  if(ctx.currentQuestion&&!changes.some((x:ProposedChange)=>x.path===ctx.currentQuestion)&&!raw.off_topic&&!["DECLINED","UNKNOWN","OFF_TOPIC","INVALID","PARTIALLY_OFF_TOPIC","PAUSE","STOP"].includes(raw.classification)){
     try{
       const second:any=await completion(EXTRACTION_PROMPT,JSON.stringify({
         ...contextPayload(ctx),LATEST_USER_MESSAGE:message,PRIOR_EXTRACTION_FIELDS:changes.map((x:ProposedChange)=>x.path),

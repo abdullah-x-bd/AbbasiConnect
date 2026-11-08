@@ -810,7 +810,7 @@ function App(){
       <Pressable accessibilityRole="button" accessibilityLabel="Dismiss error" onPress={()=>setError("")}>
         <Text style={{fontSize:18,color:T.danger}}>×</Text></Pressable>
     </View>:null}
-    {busy&&screen!=="chat"&&screen!=="recording"?<View style={styles.busy}><ActivityIndicator color={T.accent}/></View>:null}
+    {busy&&screen!=="chat"?<View style={styles.busy}><ActivityIndicator color={T.accent}/></View>:null}
     {PREVIEW?<Pressable accessibilityRole="button" accessibilityLabel="Next preview screen"
       onPress={previewNext} style={{position:"absolute",right:0,top:98,width:72,height:72,opacity:.01}}>
       <View style={{flex:1}}/></Pressable>:null}
