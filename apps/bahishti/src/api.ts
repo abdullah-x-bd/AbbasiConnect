@@ -11,7 +11,8 @@ export type FieldStatus="not_asked"|"answered"|"unknown"|"declined"|"needs_clari
 export type ChatMessage={role:"user"|"assistant";text:string;at:string;field?:string};
 export type Profile={registration:Record<string,any>;candidate:Record<string,any>;family:Record<string,any>;partner_preferences:Record<string,any>;schema_version:string};
 export type Session={id:string;phase:Phase;profile:Profile;fieldStates:Record<string,FieldStatus>;
-  messages:ChatMessage[];currentQuestion:string|null;progress:number;missingRequired:string[];version:number;
+  messages:ChatMessage[];currentQuestion:string|null;currentQuestionText?:string|null;currentQuestionTargets?:string[];
+  progress:number;missingRequired:string[];version:number;
   reviewConfirmed:boolean;phone:string|null;visible:boolean};
 export type Account={member:{id:string;phone:string};profile:Profile;visible:boolean;phase:Phase};
 export type Candidate={profileId:string;name:string;age:number;gender:string;city:string;height_cm:number;education:string;occupation:string;introduction:string;looking_for:string};

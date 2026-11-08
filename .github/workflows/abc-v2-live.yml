@@ -24,19 +24,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Wait for new ABC live voice session endpoint
+      - name: Wait for the EXACT newly deployed voice contract
         run: |
-          for i in $(seq 1 45); do
-            status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 25 \
-              -X POST -H 'content-type: application/json' -d '{"sdp":"invalid"}' \
-              https://abbasiconnect-api.onrender.com/abc/live/connect || true)
-            if [ "$status" = "401" ]; then
-              echo "ABC v1.5 cleanup deployment is available"
+          for i in $(seq 1 60); do
+            contract=$(curl -fsS --max-time 20 https://abbasiconnect-api.onrender.com/abc/health || true)
+            if echo "$contract" | grep -q '"voiceContract":"canonical-question-v2"'; then
+              echo "ABC canonical voice backend is live"
               exit 0
             fi
             sleep 10
           done
-          echo "New registration service did not become live"
+          echo "ABC voice backend release has not deployed yet"
           exit 1
       - name: Test persistent login, concise AI, biodata and optional details
         run: node apps/api/tests/abc-v2-live.mjs

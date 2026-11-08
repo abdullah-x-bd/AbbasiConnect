@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {FIELDS,FIELD_MAP,freshProfile,freshStates,normalizeField,setPath,getPath,nextQuestion,missingRequired,allFieldsResolved,CORE_GROUPS,groupProgress,inferCandidateGender,hasNonRomanScript} from "../src/abc/fields.ts";
+import {FIELDS,FIELD_MAP,freshProfile,freshStates,normalizeField,setPath,getPath,nextQuestion,missingRequired,allFieldsResolved,CORE_GROUPS,groupProgress,inferCandidateGender,hasNonRomanScript,reconcileFieldStates} from "../src/abc/fields.ts";
 
 test("all ABC fields have unique allowlisted paths and four language prompts",()=>{
   assert.equal(new Set(FIELDS.map(x=>x.path)).size,FIELDS.length);
@@ -130,4 +130,20 @@ test("ABC onboarding preference is stored independently of candidate facts",()=>
   p.registration.onboarding_mode="voice";
   assert.equal(p.registration.onboarding_mode,"voice");
   assert.equal(p.candidate.full_name,null);
+});
+
+test("real saved marital/education/job facts override outdated field statuses",()=>{
+  const profile=freshProfile(),states=freshStates();
+  profile.candidate.marital_status="never married";
+  profile.candidate.education.highest_qualification="BTech";
+  profile.candidate.occupation.profession_or_role="Software engineer";
+  profile.candidate.gender="male";
+  states["candidate.full_name"]="answered"; // invalid: no saved value
+  const synced=reconcileFieldStates(profile,states);
+  for(const path of ["candidate.marital_status","candidate.education.highest_qualification",
+    "candidate.occupation.profession_or_role","candidate.gender"])
+    assert.equal(synced[path],"answered",path);
+  assert.equal(synced["candidate.full_name"],"needs_clarification");
+  assert.equal(nextQuestion(profile,synced).path,"candidate.full_name");
+  assert.ok(!nextQuestion(profile,synced).targetPaths.includes("candidate.gender"));
 });

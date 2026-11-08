@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   VOICE_MAX_DURATION_MS,VOICE_SILENCE_WARNING_MS,VOICE_SILENCE_END_MS,
   VOICE_ALLOWED_OFF_TOPIC,VOICE_STARTED_KEY,VOICE_UNRELATED_KEY,
-  isVoiceDistraction,isVoiceRepeatRequest,unrelatedCount,countVoiceReply,voiceCallExpired,
+  isVoiceDistraction,isVoiceRepeatRequest,isVoiceAlreadyProvided,unrelatedCount,countVoiceReply,voiceCallExpired,
   voiceNoAnswerDecision,VOICE_WAIT_FOR_SPEECH_MS,VOICE_WAIT_STARTED_KEY,VOICE_NO_ANSWER_KEY
 } from "../src/abc/voice-policy.ts";
 
@@ -72,4 +72,15 @@ test("15-second waiting state repeats once then pauses without asking forever",(
   assert.equal(voiceNoAnswerDecision(waiting,now+14400),"repeat");
   assert.equal(voiceNoAnswerDecision({...waiting,[VOICE_NO_ANSWER_KEY]:1},now+15000),"end");
   assert.equal(voiceNoAnswerDecision({},now+30000),"too_soon");
+});
+
+test("already-answered complaints are recovery requests, not repetitions",()=>{
+  for(const utterance of ["I already answered that","I've already told you","I answered this earlier",
+    "I have mentioned that before","Maine pehle hi bataya tha","I told you already"]){
+    assert.equal(isVoiceAlreadyProvided(utterance),true,utterance);
+    assert.equal(isVoiceRepeatRequest(utterance),false,utterance);
+  }
+  for(const utterance of ["Repeat that","I am a teacher","What is the next question?"]){
+    assert.equal(isVoiceAlreadyProvided(utterance),false,utterance);
+  }
 });

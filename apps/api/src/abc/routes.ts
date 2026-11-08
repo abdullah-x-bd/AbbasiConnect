@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "../db.js";
 import {
-  FIELDS,FIELD_MAP,freshProfile,freshStates,getLanguage,getPath,setPath,normalizeField,nextQuestion,
+  FIELDS,FIELD_MAP,freshProfile,freshStates,getLanguage,getPath,setPath,normalizeField,nextQuestion,reconcileFieldStates,
   missingRequired,allFieldsResolved,percentComplete,safeHistory,localized,inferCandidateGender,
   type ChatMessage,type FieldStates,type Phase,type Profile,type SessionData,type Lang
 } from "./fields.js";
@@ -12,7 +12,7 @@ import { extract,interview,openRouterConfigured,transcribeAudio,cleanProfileValu
 import { renderBiodataJpeg,BIODATA_WIDTH,BIODATA_HEIGHT } from "./biodata.js";
 import {
   VOICE_MAX_DURATION_MS,VOICE_STARTED_KEY,VOICE_ALLOWED_OFF_TOPIC,
-  unrelatedCount,countVoiceReply,voiceCallExpired,isVoiceRepeatRequest,
+  unrelatedCount,countVoiceReply,voiceCallExpired,isVoiceRepeatRequest,isVoiceAlreadyProvided,
   VOICE_WAIT_STARTED_KEY,VOICE_NO_ANSWER_KEY,voiceNoAnswerDecision
 } from "./voice-policy.js";
 
@@ -34,15 +34,27 @@ function safeEq(a:string,b:string){
 function readDraft(x:any):Draft {
   return {
     id:x.id,phase:x.phase as Phase,profile:x.profile as Profile,
-    fieldStates:x.fieldStates as FieldStates,messages:(x.messages||[]) as ChatMessage[],
+    fieldStates:reconcileFieldStates(x.profile as Profile,(x.fieldStates||{}) as FieldStates),
+    messages:(x.messages||[]) as ChatMessage[],
     currentQuestion:x.currentQuestion,declines:(x.declines||{}) as Record<string,number>,
     lastClass:null,reviewConfirmed:x.reviewConfirmed,version:x.version,draftNonce:x.draftNonce,
     phone:x.phone,visible:x.visible,createdAt:x.createdAt,updatedAt:x.updatedAt
   };
 }
+// The profile and field statuses, never historical assistant text, are the
+// authority for the question currently allowed to be spoken.
+function activeQuestion(d:Draft){
+  if(d.phase!=="COLLECTING")return null;
+  const deferred=new Set(Object.keys(d.declines).filter(path=>
+    FIELD_MAP.has(path)&&d.declines[path]>=3&&d.fieldStates[path]!=="answered"));
+  return nextQuestion(d.profile,d.fieldStates,deferred);
+}
 function client(d:Draft){
+  const q=activeQuestion(d);
   return {id:d.id,phase:d.phase,profile:d.profile,fieldStates:d.fieldStates,messages:d.messages,
-    currentQuestion:d.currentQuestion,progress:percentComplete(d.fieldStates),
+    currentQuestion:q?.path??null,currentQuestionText:q?.ask[getLanguage(d.profile)]??null,
+    currentQuestionTargets:q?.targetPaths??(q?[q.path]:[]),
+    progress:percentComplete(d.fieldStates),
     missingRequired:missingRequired(d.fieldStates),reviewConfirmed:d.reviewConfirmed,
     phone:d.phone,visible:d.visible,version:d.version};
 }
@@ -89,15 +101,23 @@ export async function registerAbcRoutes(app:FastifyInstance){
     }catch{return null;}
   }
   async function store(d:Draft,changes:Partial<Draft>) {
+    const profile=changes.profile??d.profile;
+    const states=reconcileFieldStates(profile,changes.fieldStates??d.fieldStates);
+    const declines=changes.declines??d.declines;
+    const deferred=new Set(Object.keys(declines).filter(path=>
+      FIELD_MAP.has(path)&&declines[path]>=3&&states[path]!=="answered"));
+    const canonical=nextQuestion(profile,states,deferred);
+    const currentQuestion=changes.currentQuestion!==undefined?changes.currentQuestion:
+      changes.profile!==undefined||changes.fieldStates!==undefined?canonical?.path??null:d.currentQuestion;
     const updated=await prisma.abcRegistration.updateMany({
       where:{id:d.id,version:d.version},
       data:{
         ...(changes.phase!==undefined?{phase:changes.phase}:{}),
         ...(changes.profile!==undefined?{profile:changes.profile as any}:{}),
-        ...(changes.fieldStates!==undefined?{fieldStates:changes.fieldStates as any}:{}),
+        fieldStates:states as any,
         ...(changes.messages!==undefined?{messages:changes.messages as any}:{}),
         ...(changes.declines!==undefined?{declines:changes.declines as any}:{}),
-        ...(changes.currentQuestion!==undefined?{currentQuestion:changes.currentQuestion}:{}),
+        currentQuestion,
         ...(changes.reviewConfirmed!==undefined?{reviewConfirmed:changes.reviewConfirmed}:{}),
         ...(changes.phone!==undefined?{phone:changes.phone}:{}),
         ...(changes.visible!==undefined?{visible:changes.visible}:{}),
@@ -114,7 +134,8 @@ export async function registerAbcRoutes(app:FastifyInstance){
   app.get("/health",async()=>({
     ok:true,service:"abbasi-bahishti-connections",aiConfigured:openRouterConfigured(),
     smsConfigured:Boolean(process.env.ABC_SMS_NUMBER&&process.env.ABC_SMS_WEBHOOK_SECRET),
-    model:process.env.ABC_OPENROUTER_MODEL||"google/gemini-3.1-flash-lite"
+    model:process.env.ABC_OPENROUTER_MODEL||"google/gemini-3.1-flash-lite",
+    voiceContract:"canonical-question-v2"
   }));
 
   // An early, rate-limited duplicate-number check, before verification or PIN.
@@ -198,14 +219,13 @@ export async function registerAbcRoutes(app:FastifyInstance){
     const apiKey=process.env.OPENAI_API_KEY;
     if(!apiKey)return reply.code(503).send({error:"Voice Call is not configured on this server. Use Chat for now."});
     const lang=getLanguage(draft.profile);
-    const initial=([...draft.messages].reverse().find(m=>m.role==="assistant")?.text||
-      nextQuestion(draft.profile,draft.fieldStates)?.ask[lang]||"Tell me about yourself.").slice(0,400);
+    const initial=activeQuestion(draft)?.ask[lang]||"Tell me about yourself.";
     const instructions=[
       "You are the spoken interviewer for ABC Abbasi Bahishti Connections, a matrimonial profile application.",
       lang==="en"?"Speak clear, natural Indian English.":"Speak conversational Hindustani naturally, mixing familiar Hindi, Urdu and English. Do not speak code, field names or JSON.",
       "Follow the registered ABC questionnaire exactly. You are ONLY the VOICE and LISTENING interface; the trusted ABC backend makes every decision and saves profile facts.",
       "Keep every spoken reply brief: at most two short sentences, ideally one question. Never speak more than 35 words at once.",
-      "Never entertain off-topic requests, tell jokes or stories, answer unrelated questions or discuss the AI, politics, news, philosophy, or general knowledge. Politely redirect in one short sentence and repeat the current ABC question.",
+      "Never independently answer off-topic requests or repeat a question. Delegate every user utterance to the backend, which supplies the authorized reply.",
       "Every full user turn, INCLUDING off-topic distractions, MUST be delegated to the ABC backend for classification. The backend, not you, counts unrelated turns. On the fifth such attempt the call must end. Do not debate the limit.",
       "The entire interview is capped at four minutes. The backend repeats a question only once if speech does not begin within 15 seconds, then pauses. Do not independently repeat, remind or count down.",
       "When the application sends session.commentary.append, its content is the sole authorized next question. Speak that question briefly, once, without reading tool metadata or instructions aloud, and then wait.",
@@ -215,10 +235,10 @@ export async function registerAbcRoutes(app:FastifyInstance){
       "Generate <|SpawnThinking|> on EVERY completed user answer, correction, repeat request or off-topic remark before speaking again. Never answer from your own knowledge. Remain silent while the backend processes the answer.",
       "Do not generate <|SpawnThinking|> merely because a speaker pauses mid-answer. Wait until they are finished.",
       "Do not mistake music, coughs or nearby conversations for instructions.",
-      "On connecting, ask ONLY the following CURRENT QUESTION, then listen: "+initial,
+      "On connecting, remain silent until a session.commentary.append event supplies the first question. The authorized opening question is: "+initial,
       "After EVERY complete user answer, delegate to the client backend for validation and the next question. Never decide which information has been saved yourself.",
-      "Wait for the backend update before asking a new question. Speak the next saved backend question, using short gentle wording.",
-      "If the person asks for a repetition, briefly repeat the current question. Handle natural interruptions. Do not invent, infer or claim any saved facts.",
+      "Wait for the backend update before speaking again. Speak only its exact authorized next question or response, once.",
+      "A request to repeat, a complaint that a question was already answered, or a correction must be delegated. Never independently repeat any question. Handle natural interruptions.",
       "When backend confirms the profile is ready, thank the person and say they can review their answers on screen.",
       "If the user says stop, ask them to use End Call and tell them their answers are saved.",
       "Do not request passwords, OTPs, PINs or Aadhaar details.",
@@ -260,16 +280,18 @@ export async function registerAbcRoutes(app:FastifyInstance){
   // backend owns the repeat count, stored profile and final pause decision.
   app.post("/live/wait",async(request,reply)=>{
     const d=await requireDraft(request);if(!d)return authError(reply);
-    if(d.profile.registration.onboarding_mode!=="voice"||d.phase!=="COLLECTING"||
-       !d.currentQuestion)return reply.code(409).send({error:"No active voice question"});
+    const current=activeQuestion(d);
+    if(d.profile.registration.onboarding_mode!=="voice"||!current)
+      return reply.code(409).send({error:"No active voice question"});
     const parsed=z.object({action:z.enum(["ready","timeout"]),
-      version:z.number().int().nonnegative()}).safeParse(request.body);
+      version:z.number().int().nonnegative(),questionPath:z.string().max(150).optional()}).safeParse(request.body);
     if(!parsed.success)return reply.code(400).send({error:"Invalid voice timer event"});
-    if(parsed.data.version!==d.version)return reply.code(409).send({error:"Profile changed. Refresh and retry."});
+    if(parsed.data.version!==d.version||
+       (parsed.data.questionPath!==undefined&&parsed.data.questionPath!==current.path))
+      return reply.code(409).send({error:"Voice question changed. Refresh and retry."});
     if(voiceCallExpired(d.declines))return reply.code(409).send({error:"Voice Call reached four minutes."});
     const lang=getLanguage(d.profile);
-    const question=([...d.messages].reverse().find(m=>m.role==="assistant")?.text||
-      FIELD_MAP.get(d.currentQuestion)?.ask[lang]||"Please answer the current question.").slice(0,460);
+    const question=current.ask[lang];
     if(parsed.data.action==="ready"){
       const updated=await store(d,{declines:{...d.declines,[VOICE_WAIT_STARTED_KEY]:Date.now()}});
       return {session:client(updated),action:"wait",question};
@@ -329,16 +351,21 @@ export async function registerAbcRoutes(app:FastifyInstance){
   });
   app.post("/reply",async(request,reply)=>{
     const d=await requireDraft(request);if(!d)return authError(reply);
-    if(d.phase!=="COLLECTING"||!setupComplete(d.profile)||!d.currentQuestion)return reply.code(409).send({error:"Complete your initial choices first"});
     const body=z.object({text:z.string().trim().min(1).max(1500),
       version:z.number().int().nonnegative(),
       voiceTurnId:z.string().regex(/^[A-Za-z0-9_-]{12,96}$/).optional()}).safeParse(request.body);
     if(!body.success)return reply.code(400).send({error:"Enter an answer (up to 1500 characters)"});
-    const turnKey=body.data.voiceTurnId&&d.profile.registration.onboarding_mode==="voice"?
+    const turnKey=body.data.voiceTurnId?
       "__abc_voice_turn_"+createHash("sha256").update(body.data.voiceTurnId).digest("hex").slice(0,16):null;
+    // Idempotent retries must work even when the first attempt completed the
+    // interview, and before checking the caller's now-stale version.
     if(turnKey&&d.declines[turnKey]===1)
       return {session:client(d),duplicate:true,voiceDistractionCount:unrelatedCount(d.declines),
         changesAccepted:0};
+    const current=activeQuestion(d);
+    if(d.phase!=="COLLECTING"||!setupComplete(d.profile)||!current)
+      return reply.code(409).send({error:"Complete your initial choices first"});
+    const target=current.path;
     if(body.data.version!==d.version)return reply.code(409).send({error:"This interview has changed. Refresh and retry."});
     if(d.profile.registration.onboarding_mode==="voice"&&voiceCallExpired(d.declines))
       return reply.code(409).send({error:"The four-minute voice call has ended. Continue in Chat.",
@@ -346,24 +373,40 @@ export async function registerAbcRoutes(app:FastifyInstance){
     if(d.messages.length>=MAX_MESSAGES)return reply.code(429).send({error:"Interview limit reached. Please contact support."});
     if(!throttle("abc-reply:"+d.id,14,60*1000))return reply.code(429).send({error:"Too many replies. Please wait a moment."});
     const lang=getLanguage(d.profile),userText=body.data.text;
-    if(d.profile.registration.onboarding_mode==="voice"&&isVoiceRepeatRequest(userText)){
+    const isVoice=d.profile.registration.onboarding_mode==="voice";
+    // Recovery works in both Voice Call and Chat; changing input modes must
+    // never reintroduce a previously answered-question loop.
+    const wasAlreadyProvided=isVoiceAlreadyProvided(userText);
+    if(isVoice&&isVoiceRepeatRequest(userText)){
       // Repeat requests are legitimate interviewing controls, not distractions.
       // Preserve the current question without sending an extra extraction call.
-      const def=FIELD_MAP.get(d.currentQuestion);
-      const question=def?.ask[lang]||"Please answer the current profile question.";
-      const saved=await store(d,{messages:safeHistory([...d.messages,
-        note("user",userText,d.currentQuestion),note("assistant",shortMessage(question),d.currentQuestion)])});
+      const question=current.ask[lang];
+      const repeats={...d.declines};
+      if(turnKey)repeats[turnKey]=1;
+      const saved=await store(d,{declines:repeats,messages:safeHistory([...d.messages,
+        note("user",userText,target),note("assistant",shortMessage(question),target)])});
       return {session:client(saved),changesAccepted:0,classification:"REPEAT",
         voiceDistractionCount:unrelatedCount(d.declines),voiceTermination:null};
     }
-    const context={profile:d.profile,fieldStates:d.fieldStates,currentQuestion:d.currentQuestion,recent:d.messages,language:lang};
+    const context={profile:d.profile,fieldStates:d.fieldStates,currentQuestion:target,recent:d.messages,language:lang};
+    // A complaint that this was already said is a request to recover earlier
+    // user facts, NOT a new invalid answer. Re-examine only user utterances.
+    const priorUserText=d.messages.filter(m=>m.role==="user").slice(-12)
+      .map(m=>m.text).join("\n").slice(-1150);
+    const extractionText=wasAlreadyProvided&&priorUserText?
+      (priorUserText+"\n"+userText).slice(-1500):userText;
     let extracted;
-    try{extracted=await extract(context,userText);}
-    catch(e){request.log.warn({type:"abc_extraction",reason:String(e).slice(0,150)},"ABC AI unavailable");return reply.code(503).send({error:"ABC interview is temporarily unavailable. Your last answer was not lost; please retry."});}
+    try{
+      extracted=wasAlreadyProvided&&!priorUserText?
+        {classification:"VALID" as const,changes:[],declined_fields:[],unknown_fields:[],clarification:"",off_topic:false}:
+        await extract(context,extractionText);
+      // The intent has already been recognized by the application. Do not let
+      // an extractor classification turn a legitimate objection into a strike.
+      if(wasAlreadyProvided){extracted.classification="VALID";extracted.off_topic=false;}
+    }catch(e){request.log.warn({type:"abc_extraction",reason:String(e).slice(0,150)},"ABC AI unavailable");return reply.code(503).send({error:"ABC interview is temporarily unavailable. Your last answer was not lost; please retry."});}
     let profile=d.profile;
     const states={...d.fieldStates};
     let declines={...d.declines};
-    const isVoice=d.profile.registration.onboarding_mode==="voice";
     if(isVoice){
       declines[VOICE_WAIT_STARTED_KEY]=0;
       declines[VOICE_NO_ANSWER_KEY]=0;
@@ -380,8 +423,11 @@ export async function registerAbcRoutes(app:FastifyInstance){
     let count=0,issue="";
     for(const change of extracted.changes){
       if(!FIELD_MAP.has(change.path)||change.confidence==="LOW")continue;
+      // Recover only missing details. Old conversation must not silently
+      // overwrite corrected or already validated profile values.
+      if(wasAlreadyProvided&&states[change.path]==="answered")continue;
       const evidence=change.evidence.trim();
-      if(!evidence||!userText.toLocaleLowerCase().includes(evidence.toLocaleLowerCase()))continue;
+      if(!evidence||!extractionText.toLocaleLowerCase().includes(evidence.toLocaleLowerCase()))continue;
       let value:unknown;try{value=JSON.parse(change.value_json);}catch{
         // Models often send literal text instead of a JSON-escaped string inside value_json.
         // Safe for text-only fields; arrays and numbers must remain parseable JSON.
@@ -393,7 +439,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
         const normalized=await cleanProfileValue(value,"script",FIELD_MAP.get(change.path)?.label||change.path);
         value=normalized.value;
         if(normalized.uncertain&&(change.path.endsWith(".name")||change.path==="candidate.full_name")){
-          if(change.path===d.currentQuestion)issue="Please confirm the Roman spelling of this name";
+          if(change.path===target)issue="Please confirm the Roman spelling of this name";
           continue;
         }
       }catch(error){
@@ -401,14 +447,18 @@ export async function registerAbcRoutes(app:FastifyInstance){
         return reply.code(503).send({error:"Please review this answer's Roman spelling and retry."});
       }
       const valid=normalizeField(change.path,value);
-      if(!valid.ok){if(change.path===d.currentQuestion)issue=valid.error;continue;}
+      if(!valid.ok){if(change.path===target)issue=valid.error;continue;}
       profile=setPath(profile,change.path,valid.value);
       states[change.path]=valid.complete?"answered":"needs_clarification";
       if(valid.complete)declines[change.path]=0;
       count++;
     }
-    const target=d.currentQuestion;
-    if(target&&!count){
+    // Never put a person in the same-question loop after they objected.
+    // If history contains no verifiable answer, defer the specific field
+    // without marking it answered; other questions can continue.
+    if(wasAlreadyProvided&&states[target]!=="answered")
+      declines[target]=Math.max(3,declines[target]||0);
+    if(target&&!count&&!wasAlreadyProvided){
       if(extracted.declined_fields.includes(target)||extracted.classification==="DECLINED"){
         if(FIELD_MAP.get(target)?.required){
           declines[target]=(declines[target]||0)+1;issue="This information is required to complete your ABC profile";
@@ -427,7 +477,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
       }else issue=extracted.clarification||issue||(extracted.off_topic||extracted.classification==="OFF_TOPIC"?"Let's continue with your profile":"Please give a clear answer");
     }
     // Deferred required fields remain incomplete, but do not consume endless AI calls.
-    const nonresponsive=!count&&(extracted.off_topic||
+    const nonresponsive=!wasAlreadyProvided&&!count&&(extracted.off_topic||
       ["OFF_TOPIC","INVALID","PARTIALLY_OFF_TOPIC"].includes(extracted.classification));
     if(target&&nonresponsive)declines[target]=(declines[target]||0)+1;
     const deferred=new Set(Object.keys(declines).filter(path=>
@@ -452,6 +502,16 @@ export async function registerAbcRoutes(app:FastifyInstance){
       // Routine questions come from the fixed question bank, saving an LLM call.
       message=next.ask[lang];
       if(next.path===target&&issue)message=issue+". "+message;
+      if(wasAlreadyProvided&&next.path!==target){
+        const prefix=count>0?
+          localized(lang,"I found the earlier information. ","Aapka pehle diya hua jawab mil gaya. ",
+            "Aapka pehle diya hua jawab mil gaya. ","Pehle diya hua jawab mil gaya. "):
+          localized(lang,"I could not verify that earlier detail, so I will leave it for now. ",
+            "Pehla jawab pakka nahi mil saka, abhi isse chhodte hain. ",
+            "Pehla jawab pakka nahi mil saka, abhi isse chhodte hain. ",
+            "Pehla jawab pakka nahi mil saka, abhi isse chhodte hain. ");
+        message=prefix+message;
+      }
       if(!count&&extracted.classification==="AMBIGUOUS"){
         const talk=await interview({ctx:{profile,fieldStates:states,currentQuestion:next.path,recent:history,language:lang},
           next,directive,validationIssue:issue||extracted.clarification,latestUserMessage:userText});
@@ -473,15 +533,17 @@ export async function registerAbcRoutes(app:FastifyInstance){
     try{
       const saved=await store(d,{phase,profile,fieldStates:states,declines,currentQuestion:next?.path??null,messages:safeHistory(history)});
       return {session:client(saved),changesAccepted:count,classification:extracted.classification,
-        ...(isVoice?{voiceDistractionCount,voiceTermination:endForDistractions?"off_topic_limit":null}:{})};
+        ...(isVoice?{authorizedVoiceReply:shortMessage(message),voiceDistractionCount,
+          voiceTermination:endForDistractions?"off_topic_limit":null}:{})};
     }catch(e){return reply.code(409).send({error:String(e).slice(0,200)});}
   });
   app.post("/skip",async(request,reply)=>{
     const d=await requireDraft(request);if(!d)return authError(reply);
-    if(d.phase!=="COLLECTING"||!d.currentQuestion)return reply.code(409).send({error:"There is no active question"});
+    const active=activeQuestion(d);
+    if(d.phase!=="COLLECTING"||!active)return reply.code(409).send({error:"There is no active question"});
     const body=z.object({version:z.number().int()}).safeParse(request.body);
     if(!body.success||body.data.version!==d.version)return reply.code(409).send({error:"Refresh your interview before skipping"});
-    const current=d.currentQuestion,def=FIELD_MAP.get(current)!;
+    const current=active.path,def=FIELD_MAP.get(current)!;
     const states={...d.fieldStates},declines={...d.declines};
     let phase:Phase="COLLECTING",msg="";
     if(def.required){

@@ -34,15 +34,31 @@ try{
   const v=await req("/abc/choice","POST",{field:"onboarding_mode",value:"voice"});
   assert.equal(v.session.profile.registration.onboarding_mode,"voice");
   assert.equal(v.session.currentQuestion,"candidate.full_name");
-  const ready=await req("/abc/live/wait","POST",{action:"ready",version:v.session.version});
+  assert.ok(v.session.currentQuestionText.includes("naam"),"opening question must be canonical");
+  assert.ok(!v.session.currentQuestionText.toLowerCase().includes("marital"),"selected marital status must not return");
+  const ready=await req("/abc/live/wait","POST",{action:"ready",version:v.session.version,questionPath:v.session.currentQuestion});
   assert.equal(ready.action,"wait");
-  const tooSoon=await req("/abc/live/wait","POST",{action:"timeout",version:ready.session.version});
+  const tooSoon=await req("/abc/live/wait","POST",{action:"timeout",version:ready.session.version,questionPath:ready.session.currentQuestion});
   assert.equal(tooSoon.action,"wait");
   assert.equal(tooSoon.session.phase,"COLLECTING");
   await req("/abc/live/connect","POST",{sdp:"invalid"},400);
+  // Real extractor must retain two facts from a single voice turn, even when
+  // neither is the question currently being asked.
+  const spoken={text:"I completed a bachelor's degree in computer science at Aligarh Muslim University, and I work as a software engineer at Infosys.",
+    version:ready.session.version,voiceTurnId:"abc_voice_multifield_00001"};
+  const spokenResult=await req("/abc/reply","POST",spoken);
+  assert.match(String(spokenResult.session.profile.candidate.education.highest_qualification||""),/bachelor/i);
+  assert.match(String(spokenResult.session.profile.candidate.occupation.profession_or_role||""),/engineer/i);
+  assert.equal(spokenResult.session.fieldStates["candidate.education.highest_qualification"],"answered");
+  assert.equal(spokenResult.session.fieldStates["candidate.occupation.profession_or_role"],"answered");
+  assert.equal(spokenResult.session.currentQuestion,"candidate.full_name");
+  const duplicated=await req("/abc/reply","POST",spoken);
+  assert.equal(duplicated.duplicate,true,"retries must be idempotent despite old versions");
   const ch=await req("/abc/choice","POST",{field:"onboarding_mode",value:"chat"});
   assert.equal(ch.session.profile.registration.onboarding_mode,"chat");
   assert.equal(ch.session.currentQuestion,"candidate.full_name");
+  assert.equal(ch.session.fieldStates["candidate.education.highest_qualification"],"answered");
+  assert.equal(ch.session.fieldStates["candidate.occupation.profession_or_role"],"answered");
   console.log("PASS pre-chat mode selection, voice auth guard, and switch without losing progress");
   assert.ok(ch.session.messages[0].text.includes("poora naam"));
   assert.ok(ch.session.messages[0].text.includes("umr"));
@@ -50,7 +66,15 @@ try{
   assert.ok(!ch.session.messages[0].text.includes("\n"));
   console.log("PASS early language/role/self/marital choices with inferred gender");
   console.log("PASS single-language grouped question without redundant gender");
-  const response=await req("/abc/reply","POST",{text:"My name is Sajid Alam. I am 29 years old and live in Delhi. My family is originally from Aligarh.",version:ch.session.version});
+  const objection=await req("/abc/reply","POST",{
+    text:"I already answered that.",version:ch.session.version
+  });
+  assert.notEqual(objection.session.currentQuestion,ch.session.currentQuestion,
+    "already-answered recovery must not repeat the same question");
+  assert.ok(objection.session.missingRequired.includes("candidate.full_name"),
+    "a deferred question must not be falsely marked answered");
+  assert.equal(objection.session.profile.candidate.marital_status,"never married");
+  const response=await req("/abc/reply","POST",{text:"My name is Sajid Alam. I am 29 years old and live in Delhi. My family is originally from Aligarh.",version:objection.session.version});
   assert.equal(response.session.profile.candidate.full_name,"Sajid Alam");
   const login=await req("/abc/login","POST",{phone,pin});
   token=login.token;assert.equal(login.phase,"COLLECTING");
