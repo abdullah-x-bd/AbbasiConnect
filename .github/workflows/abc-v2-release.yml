@@ -11,6 +11,9 @@ on:
         description: Successful ABC Android build run ID
         required: true
         type: string
+  push:
+    branches: [main]
+    paths: [".github/workflows/abc-v2-release.yml"]
 
 permissions:
   contents: write
@@ -30,7 +33,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p abc-apk
-          RUN_ID="${{ github.event.workflow_run.id || inputs.build_run_id }}"
+          RUN_ID="${{ github.event.workflow_run.id || inputs.build_run_id || '42453425197' }}"
           test -n "$RUN_ID"
           gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name ABC-Bahishti-Android-APK --dir abc-apk
           test -s abc-apk/app-release.apk
