@@ -2,7 +2,7 @@ name: ABC Bahishti quality checks
 
 on:
   push:
-    branches: [main, "feature/abc-minimal-v2"]
+    branches: [main, "feature/abc-short-onboarding-biodata"]
     paths:
       - "apps/api/src/abc/**"
       - "apps/api/tests/abc-fields.test.mjs"
