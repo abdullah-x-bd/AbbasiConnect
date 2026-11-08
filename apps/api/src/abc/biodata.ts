@@ -136,7 +136,7 @@ export function biodataSvg(profile:Profile):string {
   out+=divider(1690);
   out+=text(68,1739,"ABC",30,850,"#1E6257");
   out+=text(139,1738,"Abbasi Bahishti Connections",22,600,"#4A625A");
-  out+=text(1132,1738,"Shared by the profile owner",17,430,"#738880",'text-anchor="end"');
+  out+=text(1132,1738,"Prepared for sharing",17,430,"#738880",'text-anchor="end"');
   out+="</svg>";
   return out;
 }
