@@ -70,6 +70,14 @@ EXPECTED=[
 ]
 def verify_screen(i):
     expected=EXPECTED[i]
+    if i==17:
+        # The deletion control sits below the visible portion of My Profile.
+        # Scroll within the real screen before checking its accessibility text.
+        time.sleep(1.5)
+        adb("shell","input","swipe","520","1750","520","650","550")
+        time.sleep(1.0)
+        adb("shell","input","swipe","520","1750","520","650","550")
+        time.sleep(1.2)
     for attempt in range(15):
         contents=" ".join(n.attrib.get("text","")+" "+n.attrib.get("content-desc","") for n in dump())
         if expected.lower() in contents.lower():return
