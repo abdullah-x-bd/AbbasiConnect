@@ -135,7 +135,7 @@ export function normalizeField(path:string,raw:unknown): {ok:true;value:unknown;
 }
 export function getLanguage(profile:Profile):Lang {
   const v=profile?.registration?.preferred_script;
-  return LANGS.includes(v)?v:"en";
+  return LANGS.includes(v)?v:"roman";
 }
 // Seven short clusters replace a long one-field-at-a-time interview.
 // When a person supplies several answers together, missing fields in that
@@ -168,11 +168,16 @@ export function isFieldSatisfied(def:FieldDef,states:FieldStates):boolean{
   const status=states[def.path]??"not_asked";
   return status==="answered"||(status==="unknown"&&Boolean(def.allowUnknown));
 }
-export function nextQuestion(profile:Profile,states:FieldStates):FieldDef|null {
+export function inferCandidateGender(lookingFor:"bride"|"groom"):"male"|"female" {
+  // In this matrimonial flow the selected partner role implies candidate gender.
+  // A profile edit can still correct the inference.
+  return lookingFor==="bride"?"male":"female";
+}
+export function nextQuestion(profile:Profile,states:FieldStates,excluded:ReadonlySet<string>=new Set()):FieldDef|null {
   for(const group of CORE_GROUPS){
     const missing=group.paths.filter(path=>{
       const def=FIELD_MAP.get(path);
-      return def&&def.required&&!isFieldSatisfied(def,states);
+      return def&&def.required&&!excluded.has(path)&&!isFieldSatisfied(def,states);
     });
     if(!missing.length)continue;
     const main=FIELD_MAP.get(missing[0])!;

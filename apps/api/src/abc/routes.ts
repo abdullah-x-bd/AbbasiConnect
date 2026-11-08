@@ -5,7 +5,7 @@ import { z } from "zod";
 import { prisma } from "../db.js";
 import {
   FIELDS,FIELD_MAP,freshProfile,freshStates,getLanguage,getPath,setPath,normalizeField,nextQuestion,
-  missingRequired,allFieldsResolved,percentComplete,safeHistory,localized,
+  missingRequired,allFieldsResolved,percentComplete,safeHistory,localized,inferCandidateGender,
   type ChatMessage,type FieldStates,type Phase,type Profile,type SessionData,type Lang
 } from "./fields.js";
 import { extract,interview,openRouterConfigured,transcribeAudio } from "./llm.js";
@@ -48,7 +48,7 @@ function requiredSummary(d:Draft){
 }
 function setupComplete(p:Profile){
   return Boolean(p.registration?.preferred_language&&p.registration?.looking_for&&p.registration?.profile_for&&
-    (p.registration.profile_for!=="relative"||p.registration.registrant_relationship_to_candidate));
+    (p.registration.profile_for!=="relative"||p.registration.registrant_relationship_to_candidate)&&p.candidate?.marital_status);
 }
 function shortMessage(text:string){return text.trim().slice(0,460);}
 function perKeyThrottle(){
@@ -112,6 +112,17 @@ export async function registerAbcRoutes(app:FastifyInstance){
     model:process.env.ABC_OPENROUTER_MODEL||"google/gemini-3.1-flash-lite"
   }));
 
+  // An early, rate-limited duplicate-number check, before verification or PIN.
+  app.post("/phone/check",async(request,reply)=>{
+    const body=z.object({phone:z.string().trim().max(30)}).safeParse(request.body);
+    if(!body.success)return reply.code(400).send({error:"Enter a valid mobile number"});
+    let phone:string;try{phone=normalizePhone(body.data.phone);}catch(e){return validationError(reply,e);}
+    if(!throttle("abc-phone-check:"+request.ip,50,60*60*1000))
+      return reply.code(429).send({error:"Too many number checks. Please try later."});
+    const existing=await prisma.abcAccount.findUnique({where:{phone},select:{id:true}});
+    return {registered:Boolean(existing)};
+  });
+
   // Early account creation for the redesigned ABC flow.
   // "Continue" on the phone screen is intentionally a demo step, not SMS verification.
   // phoneVerified remains FALSE until a real receiving gateway confirms ownership.
@@ -124,8 +135,6 @@ export async function registerAbcRoutes(app:FastifyInstance){
     if(await prisma.abcAccount.findUnique({where:{phone}}))
       return reply.code(409).send({error:"This number is already registered. Please sign in."});
     const profile=freshProfile();
-    profile.registration.preferred_language="roman";
-    profile.registration.preferred_script="roman";
     const states=freshStates();
     const pinHash=await bcrypt.hash(body.data.pin,12);
     try{
@@ -168,24 +177,34 @@ export async function registerAbcRoutes(app:FastifyInstance){
   app.post("/choice",async(request,reply)=>{
     const d=await requireDraft(request);if(!d)return authError(reply);
     if(d.phase!=="COLLECTING")return reply.code(409).send({error:"The interview is not collecting answers"});
-    const body=z.object({field:z.enum(["preferred_language","looking_for","profile_for","candidate_consent_confirmed","registrant_relationship_to_candidate"]),value:z.union([z.string().max(100),z.boolean()])}).safeParse(request.body);
+    const body=z.object({field:z.enum(["preferred_language","looking_for","profile_for","candidate_consent_confirmed","registrant_relationship_to_candidate","marital_status"]),value:z.union([z.string().max(100),z.boolean()])}).safeParse(request.body);
     if(!body.success)return reply.code(400).send({error:"Invalid selection"});
     const {field,value}=body.data;const p=structuredClone(d.profile),reg=p.registration;
+    const states={...d.fieldStates};
     const allowed:Record<string,unknown[]>={
       preferred_language:["en","hi","ur","roman"],looking_for:["bride","groom"],
-      profile_for:["self","relative"],candidate_consent_confirmed:[true,false]
+      profile_for:["self","relative"],candidate_consent_confirmed:[true,false],
+      marital_status:["never married","divorced","widowed","separated","annulled","other"]
     };
     if(field in allowed&&!allowed[field].includes(value))return reply.code(400).send({error:"Invalid selection"});
     if(field==="registrant_relationship_to_candidate"&&(typeof value!=="string"||value.trim().length<2))return reply.code(400).send({error:"Describe your relationship"});
     if(field==="profile_for"&&!reg.looking_for)return reply.code(409).send({error:"Choose bride or groom first"});
     if(field==="candidate_consent_confirmed"&&reg.profile_for!=="relative")return reply.code(400).send({error:"Consent selection is for relative registrations"});
-    reg[field]=value;
+    if(field==="marital_status"){
+      if(!reg.looking_for||!reg.profile_for)return reply.code(409).send({error:"Finish initial choices first"});
+      p.candidate.marital_status=value;
+      states["candidate.marital_status"]="answered";
+    }else reg[field]=value;
+    if(field==="looking_for"&&states["candidate.gender"]!=="answered"){
+      p.candidate.gender=inferCandidateGender(value as "bride"|"groom");
+      states["candidate.gender"]="answered";
+    }
     if(field==="preferred_language")reg.preferred_script=value;
     if(field==="profile_for"&&value==="self")reg.candidate_consent_confirmed=true;
-    const next=setupComplete(p)?nextQuestion(p,d.fieldStates):null;
+    const next=setupComplete(p)?nextQuestion(p,states):null;
     const msgs=[...d.messages];
-    if(next&&!d.currentQuestion)msgs.push(note("assistant",next.ask.en+"\n"+next.ask.roman,next.path));
-    const changed=await store(d,{profile:p,messages:safeHistory(msgs),currentQuestion:next?.path??null});
+    if(next&&!d.currentQuestion)msgs.push(note("assistant",next.ask[getLanguage(p)],next.path));
+    const changed=await store(d,{profile:p,fieldStates:states,messages:safeHistory(msgs),currentQuestion:next?.path??null});
     return {session:client(changed),setupComplete:setupComplete(p)};
   });
   app.post("/reply",async(request,reply)=>{
@@ -235,21 +254,43 @@ export async function registerAbcRoutes(app:FastifyInstance){
         else if(FIELD_MAP.get(target)?.required){states[target]="needs_clarification";issue="We need a clear answer for this required field";}
         else states[target]="unknown";
       }else if(extracted.classification==="PAUSE"||extracted.classification==="STOP"){
-        const p=await store(d,{phase:"PAUSED",messages:safeHistory([...d.messages,note("user",userText),note("assistant","Your progress is saved. You can resume when ready.")])});
+        const p=await store(d,{phase:"PAUSED",messages:safeHistory([...d.messages,note("user",userText),note("assistant",localized(lang,"Your progress is saved. You can resume when ready.","Aapke jawaab save hain.","آپ کے جواب محفوظ ہیں۔","Aapke jawaab save hain."))])});
         return {session:client(p)};
       }else issue=extracted.clarification||issue||(extracted.off_topic||extracted.classification==="OFF_TOPIC"?"Let's continue with your profile":"Please give a clear answer");
     }
-    const blocked=Boolean(target&&(declines[target]||0)>=2&&FIELD_MAP.get(target)?.required&&states[target]!=="answered");
+    // Deferred required fields remain incomplete, but do not consume endless AI calls.
+    const nonresponsive=!count&&(extracted.off_topic||
+      ["OFF_TOPIC","INVALID","PARTIALLY_OFF_TOPIC"].includes(extracted.classification));
+    if(target&&nonresponsive)declines[target]=(declines[target]||0)+1;
+    const deferred=new Set(Object.keys(declines).filter(path=>
+      FIELD_MAP.has(path)&&declines[path]>=3&&states[path]!=="answered"));
     const complete=missingRequired(states).length===0&&allFieldsResolved(states);
+    const available=complete?null:nextQuestion(profile,states,deferred);
+    const blocked=!complete&&!available;
     const phase:Phase=blocked?"BLOCKED_REQUIRED":complete?"REVIEW":"COLLECTING";
-    const next=phase==="COLLECTING"?nextQuestion(profile,states):null;
+    const next=phase==="COLLECTING"?available:null;
     const directive=blocked?"BLOCKED":complete?"READY":
       target&&(declines[target]||0)===1&&extracted.classification==="DECLINED"?"REQUIRED_REFUSAL":
       next?.path===target?"RETRY":"ASK";
     const history=[...d.messages,note("user",userText,target)];
-    const talk=await interview({ctx:{profile,fieldStates:states,currentQuestion:next?.path||null,recent:history,language:lang},
-      next,directive,validationIssue:issue,latestUserMessage:userText});
-    history.push(note("assistant",shortMessage(talk.message),next?.path));
+    let message:string;
+    if(phase==="REVIEW")message=localized(lang,"Your profile is ready to review.","Aapki profile tayyar hai.","آپ کی پروفائل تیار ہے۔","Profile tayyar hai. Ek baar check kar lein.");
+    else if(phase==="BLOCKED_REQUIRED")message=localized(lang,
+      "Some essential answers are still missing. Your progress is saved. Resume to complete them.",
+      "Kuch zaroori jawab reh gaye hain. Aapke jawab save hain.",
+      "کچھ ضروری جواب باقی ہیں۔ آپ کی پیش رفت محفوظ ہے۔",
+      "Kuch zaroori jawab reh gaye hain. Aapke jawab save hain. Baad mein poora karein.");
+    else if(next){
+      // Routine questions come from the fixed question bank, saving an LLM call.
+      message=next.ask[lang];
+      if(next.path===target&&issue)message=issue+". "+message;
+      if(!count&&extracted.classification==="AMBIGUOUS"){
+        const talk=await interview({ctx:{profile,fieldStates:states,currentQuestion:next.path,recent:history,language:lang},
+          next,directive,validationIssue:issue||extracted.clarification,latestUserMessage:userText});
+        message=talk.message;
+      }
+    }else message="Your answers are saved.";
+    history.push(note("assistant",shortMessage(message),next?.path));
     try{
       const saved=await store(d,{phase,profile,fieldStates:states,declines,currentQuestion:next?.path??null,messages:safeHistory(history)});
       return {session:client(saved),changesAccepted:count,classification:extracted.classification};
@@ -265,14 +306,16 @@ export async function registerAbcRoutes(app:FastifyInstance){
     let phase:Phase="COLLECTING",msg="";
     if(def.required){
       declines[current]=(declines[current]||0)+1;
-      if(declines[current]>=2){
-        phase="BLOCKED_REQUIRED";
-        msg="This is essential for ABC registration, so we've saved your profile. You can resume when you're ready to answer.";
+      if(declines[current]>=3){
+        msg="We will return to this essential answer later.";
       }else msg="This information is required to complete your profile. Please answer so we can continue.";
       states[current]="needs_clarification";
     }else{states[current]="declined";}
-    const next=phase==="COLLECTING"?nextQuestion(d.profile,states):null;
-    if(next&&!msg)msg=next.ask.en+"\n"+next.ask.roman;
+    const deferred=new Set(Object.keys(declines).filter(path=>FIELD_MAP.has(path)&&declines[path]>=3));
+    const next=nextQuestion(d.profile,states,deferred);
+    if(!next)phase="BLOCKED_REQUIRED";
+    if(next)msg=next.ask[getLanguage(d.profile)];
+    else msg="Essential answers remain. Your progress is saved. Resume when you are ready.";
     const saved=await store(d,{fieldStates:states,declines,phase,currentQuestion:next?.path??null,
       messages:safeHistory([...d.messages,note("user","Prefer not to say",current),note("assistant",msg,next?.path)])});
     return {session:client(saved)};
@@ -281,7 +324,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
     const d=await requireDraft(request);if(!d)return authError(reply);
     if(!["PAUSED","BLOCKED_REQUIRED"].includes(d.phase))return reply.code(409).send({error:"Interview is not paused"});
     const next=nextQuestion(d.profile,d.fieldStates);
-    const msg=next?next.ask.en+"\n"+next.ask.roman:"Your profile is ready.\nAapka profile tayyar hai.";
+    const msg=next?next.ask[getLanguage(d.profile)]:localized(getLanguage(d.profile),"Your profile is ready.","Profile tayyar hai.","پروفائل تیار ہے۔","Profile tayyar hai.");
     const saved=await store(d,{phase:next?"COLLECTING":"REVIEW",currentQuestion:next?.path??null,
       declines:{...d.declines,[next?.path||""]:0},messages:safeHistory([...d.messages,note("assistant",msg,next?.path)])});
     return {session:client(saved)};
@@ -491,8 +534,16 @@ export async function registerAbcRoutes(app:FastifyInstance){
     const dataUri="data:"+body.data.mime+";base64,"+buffer.toString("base64");
     const profile=structuredClone(acc.registration.profile as any);
     profile.candidate.profile_photo={uploaded:true,mime:body.data.mime,updatedAt:new Date().toISOString()};
+    profile.registration.photo_prompt_seen=true;
     await prisma.abcRegistration.update({where:{id:acc.registrationId},data:{photoData:dataUri,profile:profile as any,version:{increment:1}}});
     return {ok:true,photo:profile.candidate.profile_photo};
+  });
+  app.post("/photo/prompt",async(request,reply)=>{
+    const acc=await requireAccount(request);if(!acc)return reply.code(401).send({error:"Sign in first"});
+    const profile=structuredClone(acc.registration.profile as any);
+    profile.registration.photo_prompt_seen=true;
+    const saved=await store(readDraft(acc.registration),{profile});
+    return {session:client(saved)};
   });
   app.get("/photo",async(request,reply)=>{
     const acc=await requireAccount(request);if(!acc)return reply.code(401).send({error:"Sign in first"});
