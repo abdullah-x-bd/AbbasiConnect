@@ -24,12 +24,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Wait for new v1.5 Gemini-enrichment endpoint
+      - name: Wait for new ABC live voice session endpoint
         run: |
           for i in $(seq 1 45); do
             status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 25 \
-              -X POST -H 'content-type: application/json' -d '{"path":"candidate.personal_introduction","text":"test"}' \
-              https://abbasiconnect-api.onrender.com/abc/enrichment/prepare || true)
+              -X POST -H 'content-type: application/json' -d '{"sdp":"invalid"}' \
+              https://abbasiconnect-api.onrender.com/abc/live/connect || true)
             if [ "$status" = "401" ]; then
               echo "ABC v1.5 cleanup deployment is available"
               exit 0

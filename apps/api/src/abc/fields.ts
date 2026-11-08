@@ -66,7 +66,7 @@ export type SessionData = {phase:Phase;profile:Profile;fieldStates:FieldStates;m
 export function freshProfile():Profile {
   return {
     schema_version:"1.0.0",
-    registration:{preferred_language:null,preferred_script:null,looking_for:null,profile_for:null,registrant_relationship_to_candidate:null,candidate_consent_confirmed:null},
+    registration:{preferred_language:null,preferred_script:null,looking_for:null,profile_for:null,registrant_relationship_to_candidate:null,candidate_consent_confirmed:null,onboarding_mode:null},
     candidate:{full_name:null,gender:null,age_years:null,height_cm:null,weight_kg:null,marital_status:null,children_count:null,
       current_location:{city:null,state:null,country:null},
       ancestral_location:{city_or_town:null,district:null,state:null,country:null},

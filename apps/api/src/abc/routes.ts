@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import { randomInt, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomInt, randomUUID, timingSafeEqual, createHash } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "../db.js";
@@ -48,7 +48,7 @@ function requiredSummary(d:Draft){
 }
 function setupComplete(p:Profile){
   return Boolean(p.registration?.preferred_language&&p.registration?.looking_for&&p.registration?.profile_for&&
-    (p.registration.profile_for!=="relative"||p.registration.registrant_relationship_to_candidate)&&p.candidate?.marital_status);
+    (p.registration.profile_for!=="relative"||p.registration.registrant_relationship_to_candidate)&&p.candidate?.marital_status&&["chat","voice"].includes(p.registration.onboarding_mode));
 }
 function shortMessage(text:string){return text.trim().slice(0,460);}
 function perKeyThrottle(){
@@ -174,17 +174,73 @@ export async function registerAbcRoutes(app:FastifyInstance){
     await prisma.abcRegistration.delete({where:{id:d.id}});
     return {ok:true};
   });
+  // Live voice sessions are paid, authenticated, short-lived and created on the
+  // server. The OpenAI API key is NEVER returned to the Android application.
+  app.post("/live/connect",async(request,reply)=>{
+    const draft=await requireDraft(request);
+    if(!draft)return authError(reply);
+    if(draft.phase!=="COLLECTING"||!setupComplete(draft.profile)||
+      draft.profile.registration.onboarding_mode!=="voice")
+      return reply.code(409).send({error:"Choose Voice Call during onboarding first"});
+    const body=z.object({sdp:z.string().min(30).max(24000)}).safeParse(request.body);
+    if(!body.success||!/^v=0\r?\n/m.test(body.data.sdp))
+      return reply.code(400).send({error:"Invalid audio connection offer"});
+    if(!throttle("abc-live:"+draft.id,5,60*60*1000)||
+       !throttle("abc-live-ip:"+request.ip,20,60*60*1000))
+      return reply.code(429).send({error:"Voice call limit reached. Please use Chat for now."});
+    const apiKey=process.env.OPENAI_API_KEY;
+    if(!apiKey)return reply.code(503).send({error:"Voice Call is not configured on this server. Use Chat for now."});
+    const lang=getLanguage(draft.profile);
+    const initial=([...draft.messages].reverse().find(m=>m.role==="assistant")?.text||
+      nextQuestion(draft.profile,draft.fieldStates)?.ask[lang]||"Tell me about yourself.").slice(0,400);
+    const instructions=[
+      "You are the spoken interviewer for ABC Abbasi Bahishti Connections, a matrimonial profile application.",
+      lang==="en"?"Speak clear, natural Indian English.":"Speak conversational Hindustani naturally, mixing familiar Hindi, Urdu and English. Do not speak code, field names or JSON.",
+      "Follow the registered ABC questionnaire exactly. You are the VOICE and LISTENING interface; the trusted ABC backend makes every decision and saves profile facts.",
+      "On connecting, ask ONLY the following CURRENT QUESTION, then listen: "+initial,
+      "After EVERY complete user answer, delegate to the client backend for validation and the next question. Never decide which information has been saved yourself.",
+      "Wait for the backend update before asking a new question. Speak the next saved backend question, using short gentle wording.",
+      "If the person asks for a repetition, briefly repeat the current question. Handle natural interruptions. Do not invent, infer or claim any saved facts.",
+      "When backend confirms the profile is ready, thank the person and say they can review their answers on screen.",
+      "If the user says stop, ask them to use End Call and tell them their answers are saved.",
+      "Do not request passwords, OTPs, PINs or Aadhaar details.",
+    ].join("\n");
+    try{
+      const response=await fetch("https://api.openai.com/v1/live/sessions",{
+        method:"POST",
+        headers:{"Authorization":"Bearer "+apiKey,"Content-Type":"application/json",
+          "OpenAI-Safety-Identifier":createHash("sha256").update(draft.id).digest("hex").slice(0,40)},
+        body:JSON.stringify({
+          session:{model:"gpt-live-1",instructions,
+            audio:{output:{voice:"marin"}},
+            delegation:{type:"client",acknowledgement_delay_ms:800},store:false},
+          transport:{type:"webrtc",sdp:body.data.sdp}
+        }),
+        signal:AbortSignal.timeout(22000)
+      });
+      const payload:any=await response.json().catch(()=>({}));
+      if(!response.ok||typeof payload?.transport?.sdp!=="string"||!payload?.session?.id){
+        request.log.warn({status:response.status,reason:String(payload?.error?.message||"live unavailable").slice(0,250)},"ABC voice connection refused");
+        return reply.code(503).send({error:"Voice connection unavailable. Try again or choose Chat."});
+      }
+      return {sessionId:payload.session.id,answer:payload.transport.sdp};
+    }catch(e){
+      request.log.warn({reason:String(e).slice(0,160)},"ABC voice connection error");
+      return reply.code(503).send({error:"Voice connection timed out. Use Chat or try again."});
+    }
+  });
+
   app.post("/choice",async(request,reply)=>{
     const d=await requireDraft(request);if(!d)return authError(reply);
     if(d.phase!=="COLLECTING")return reply.code(409).send({error:"The interview is not collecting answers"});
-    const body=z.object({field:z.enum(["preferred_language","looking_for","profile_for","candidate_consent_confirmed","registrant_relationship_to_candidate","marital_status"]),value:z.union([z.string().max(100),z.boolean()])}).safeParse(request.body);
+    const body=z.object({field:z.enum(["preferred_language","looking_for","profile_for","candidate_consent_confirmed","registrant_relationship_to_candidate","marital_status","onboarding_mode"]),value:z.union([z.string().max(100),z.boolean()])}).safeParse(request.body);
     if(!body.success)return reply.code(400).send({error:"Invalid selection"});
     const {field,value}=body.data;const p=structuredClone(d.profile),reg=p.registration;
     const states={...d.fieldStates};
     const allowed:Record<string,unknown[]>={
       preferred_language:["en","hi","ur","roman"],looking_for:["bride","groom"],
       profile_for:["self","relative"],candidate_consent_confirmed:[true,false],
-      marital_status:["never married","divorced","widowed","separated","annulled","other"]
+      marital_status:["never married","divorced","widowed","separated","annulled","other"],onboarding_mode:["chat","voice"]
     };
     if(field in allowed&&!allowed[field].includes(value))return reply.code(400).send({error:"Invalid selection"});
     if(field==="registrant_relationship_to_candidate"&&(typeof value!=="string"||value.trim().length<2))return reply.code(400).send({error:"Describe your relationship"});

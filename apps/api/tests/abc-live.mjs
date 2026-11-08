@@ -20,7 +20,7 @@ try{
   let created=await request("/abc/start","POST",{},201);
   sessionToken=created.token;sessions.push(sessionToken);
   assert.equal(created.session.profile.candidate.full_name,null);
-  for(const [field,value] of [["preferred_language","en"],["looking_for","bride"],["profile_for","self"],["marital_status","never married"]]){
+  for(const [field,value] of [["preferred_language","en"],["looking_for","bride"],["profile_for","self"],["marital_status","never married"],["onboarding_mode","chat"]]){
     const data=await request("/abc/choice","POST",{field,value});
     assert.equal(field==="marital_status"?data.session.profile.candidate.marital_status:data.session.profile.registration[field],value);
   }
@@ -44,7 +44,7 @@ try{
   }else console.log("SKIP live AI: Render model key unavailable");
   created=await request("/abc/start","POST",{},201);
   sessionToken=created.token;sessions.push(sessionToken);
-  for(const [field,value] of [["preferred_language","en"],["looking_for","groom"],["profile_for","self"],["marital_status","never married"]])
+  for(const [field,value] of [["preferred_language","en"],["looking_for","groom"],["profile_for","self"],["marital_status","never married"],["onboarding_mode","chat"]])
     await request("/abc/choice","POST",{field,value});
   const state=(await request("/abc/state")).session;
   const first=await request("/abc/skip","POST",{version:state.version});
@@ -61,7 +61,7 @@ try{
   console.log("PASS three refused replies defer the required field without marking it complete");
   created=await request("/abc/start","POST",{},201);
   sessionToken=created.token;sessions.push(sessionToken);
-  for(const [field,value] of [["preferred_language","en"],["looking_for","bride"],["profile_for","self"],["marital_status","never married"]])
+  for(const [field,value] of [["preferred_language","en"],["looking_for","bride"],["profile_for","self"],["marital_status","never married"],["onboarding_mode","chat"]])
     await request("/abc/choice","POST",{field,value});
   const values={
     "candidate.full_name":"ABC Test Candidate",

@@ -5,22 +5,22 @@ import {
 } from "react-native";
 import {SafeAreaProvider,SafeAreaView} from "react-native-safe-area-context";
 import {AudioModule,RecordingPresets,setAudioModeAsync,useAudioRecorder} from "expo-audio";
-import * as Speech from "expo-speech";
 import * as ImagePicker from "expo-image-picker";
 import {File,Paths,Directory} from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import {BiodataScreen,EnrichmentScreen,ExtraDetailScreen,EXTRA_FIELDS,type ExtraField} from "./ExtraScreens";
+import VoiceCall from "./VoiceCall";
 import {api,clearTokens,restoreTokens,setMemberToken,
   type Session,type Account,type Candidate} from "./api";
 import {T,st,H,Btn,Field,Circle,Back,Hr,BrandLogo} from "./minimal-ui";
 
 type Screen="loading"|"welcome"|"signupPhone"|"registered"|"verify"|"pinSignup"|"signin"|
-  "language"|"purpose"|"for"|"relation"|"marital"|"chat"|"photoOffer"|"done"|"review"|
+  "language"|"purpose"|"for"|"relation"|"marital"|"mode"|"chat"|"voice"|"voiceStopped"|"photoOffer"|"done"|"review"|
   "explore"|"interests"|"profile"|"paused"|"biodata"|"enrich"|"enrichEdit"|"deleteAccount";
 type Interest={id:string;name:string;status:string;note?:string};
 const PREVIEW=process.env.EXPO_PUBLIC_ABC_PREVIEW==="1";
 const SCREENS:Screen[]=["welcome","signupPhone","registered","verify","pinSignup","signin",
-  "language","purpose","for","relation","marital","chat","photoOffer","done","review",
+  "language","purpose","for","relation","marital","mode","chat","voice","voiceStopped","photoOffer","done","review",
   "explore","interests","profile","deleteAccount","paused","biodata","enrich","enrichEdit"];
 const sampleProfile:any={
   schema_version:"1.0.0",
@@ -103,7 +103,8 @@ function accountPage(phase:string,profile:any):Screen{
   if(!profile.registration?.profile_for)return "for";
   if(profile.registration.profile_for==="relative"&&!profile.registration.registrant_relationship_to_candidate)return "relation";
   if(!profile.candidate?.marital_status)return "marital";
-  return "chat";
+  if(!profile.registration?.onboarding_mode)return "mode";
+  return profile.registration.onboarding_mode==="voice"?"voice":"chat";
 }
 function App(){
   const [screen,setScreen]=useState<Screen>("loading");
@@ -195,26 +196,28 @@ function App(){
     }
     setError("");setScreen(SCREENS[i]);
   }
-  function speakMessage(answer:string){
-    if(PREVIEW)return;
-    void Speech.stop();
-    const lang=session?.profile.registration?.preferred_language;
-    Speech.speak(answer.replace(/\n/g,". "),{
-      language:lang==="en"?"en-IN":lang==="ur"?"ur-PK":"hi-IN",
-      rate:.9,pitch:1
-    });
-  }
   async function choose(field:string,value:string){
     if(PREVIEW){
       setScreen(field==="preferred_language"?"purpose":
         field==="looking_for"?"for":
         field==="profile_for"?(value==="relative"?"relation":"marital"):
-        field==="registrant_relationship_to_candidate"?"marital":"chat");
+        field==="registrant_relationship_to_candidate"?"marital":
+        field==="marital_status"?"mode":
+        field==="onboarding_mode"?(value==="voice"?"voice":"chat"):"mode");
       return;
     }
     await task(async()=>{
       const d=await api<{session:Session}>("/abc/choice",{method:"POST",body:{field,value}});
       goState(d.session);
+    });
+  }
+  async function switchToChat(){
+    if(PREVIEW){setScreen("chat");return;}
+    await task(async()=>{
+      const changed=await api<{session:Session}>("/abc/choice",{
+        method:"POST",body:{field:"onboarding_mode",value:"chat"}
+      });
+      goState(changed.session);
     });
   }
   async function signup(){
@@ -528,7 +531,7 @@ function App(){
     return <View style={st.page}>
       {header("ABC",()=>setScreen(field==="preferred_language"?"welcome":
         field==="looking_for"?"language":field==="profile_for"?"purpose":
-        field==="marital_status"?"for":"for"))}
+        field==="marital_status"?"for":field==="onboarding_mode"?"marital":"for"))}
       <View style={[st.inner,{justifyContent:"center",paddingBottom:84}]}>
         <H en={title} roman={roman}/>
         {options.map(o=><View key={o.value} style={{marginBottom:14}}>
@@ -547,11 +550,7 @@ function App(){
       <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" contentContainerStyle={{paddingHorizontal:16,paddingTop:13,paddingBottom:32}}
         onContentSizeChange={()=>scrollRef.current?.scrollToEnd({animated:true})} style={{flex:1}}>
         {messages.map((m,i)=><View key={i} style={[st.bubble,m.role==="assistant"?st.aiBubble:st.myBubble]}>
-          <Pressable disabled={m.role!=="assistant"} accessibilityRole={m.role==="assistant"?"button":"text"}
-            accessibilityLabel={m.role==="assistant"?"Listen to the question":"Your reply"}
-            onPress={()=>{if(m.role==="assistant")speakMessage(m.text);}}>
-            <Text style={[st.bubbleText,m.role==="user"&&{color:T.white}]}>{m.text}</Text>
-          </Pressable>
+          <Text style={[st.bubbleText,m.role==="user"&&{color:T.white}]}>{m.text}</Text>
         </View>)}
         {photoSaved?<View style={{alignSelf:"flex-end",backgroundColor:T.light,padding:11,borderRadius:14,marginBottom:12}}>
           <Text style={{fontSize:14,color:T.accent}}>Photo saved / Tasveer save hai</Text>
@@ -827,7 +826,31 @@ function App(){
       {en:"Separated",roman:"Alag rehte hain",value:"separated"},
       {en:"Other",roman:"Koi aur",value:"other"}
     ],"marital_status");
+    if(screen==="mode")return choicePage("How would you like to answer?",
+      "Aap kaise baat karna pasand karenge?",[
+        {en:"Chat",roman:"Likh kar ya voice-to-text se jawaab dein",value:"chat"},
+        {en:"Voice Call",roman:"ABC se seedhi awaaz mein baat karein",value:"voice"}
+      ],"onboarding_mode");
     if(screen==="chat")return chatScreen();
+    if(screen==="voice"&&session)return <VoiceCall session={session} preview={PREVIEW}
+      onSession={updated=>{
+        setSession(updated);
+        if(updated.phase!=="COLLECTING")setScreen(accountPage(updated.phase,updated.profile));
+      }}
+      onSwitchToChat={switchToChat}
+      onEnd={()=>setScreen("voiceStopped")}/>;
+    if(screen==="voiceStopped")return <View style={st.page}>
+      {header("Voice Call",()=>setScreen("mode"),"Awaaz wali baat-cheet")}
+      <View style={[st.inner,{justifyContent:"center",paddingBottom:85}]}>
+        <H en="Your answers are saved" roman="Aapke jawaab save ho gaye hain" center/>
+        <Text style={[st.sub,{textAlign:"center",marginBottom:28}]}>
+          Resume your call or continue in Chat. Your answers remain saved.
+        </Text>
+        <Btn en="Resume Voice Call" roman="Call dobara karein" onPress={()=>setScreen("voice")}/>
+        <View style={{height:12}}/>
+        <Btn en="Switch to Chat" roman="Chat se jawaab dein" secondary onPress={()=>void switchToChat()}/>
+      </View>
+    </View>;
     if(screen==="photoOffer")return <View style={st.page}>
       {header("Profile photo",()=>setScreen("review"),"Tasveer")}
       <View style={[st.inner,{justifyContent:"center",paddingBottom:80}]}>
@@ -848,7 +871,7 @@ function App(){
         <Btn en="Continue questions" roman="Sawaal jaari rakhein" onPress={()=>void resume()}/>
       </View></View>;
     if(screen==="done")return <View style={st.page}>
-      {header("All done",()=>setScreen("chat"),"Ho gaya")}
+      {header("All done",()=>setScreen(profile.registration?.onboarding_mode==="voice"?"voiceStopped":"chat"),"Ho gaya")}
       <View style={[st.inner,{justifyContent:"center",paddingBottom:70}]}>
         <View style={{alignItems:"center",marginBottom:26}}>
           <View style={[styles.avatar,{width:90,height:90,borderRadius:45}]}>

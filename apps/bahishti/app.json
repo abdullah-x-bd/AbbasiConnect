@@ -3,7 +3,7 @@
     "name": "ABC Bahishti Connections",
     "slug": "abc-bahishti",
     "scheme": "abcbahishti",
-    "version": "1.6.1",
+    "version": "1.7.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "android": {
@@ -35,7 +35,8 @@
           "microphonePermission": "Allow ABC Bahishti Connections to record voice answers for transcription.",
           "enableBackgroundRecording": false
         }
-      ]
+      ],
+      "@config-plugins/react-native-webrtc"
     ],
     "extra": {
       "appName": "Abbasi Bahishti Connections"
