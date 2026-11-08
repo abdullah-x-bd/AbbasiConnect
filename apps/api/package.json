@@ -26,7 +26,8 @@
     "fastify": "latest",
     "pg": "latest",
     "tesseract.js": "7.0.0",
-    "zod": "latest"
+    "zod": "latest",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "@types/node": "latest",
