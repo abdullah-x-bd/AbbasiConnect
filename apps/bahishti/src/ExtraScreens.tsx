@@ -122,18 +122,18 @@ export function EnrichmentScreen({profile,select,onBack}:{
   </View>;
 }
 
-export function ExtraDetailScreen({field,value,onChange,busy,recording,prepared,uncertain,
-  onMic,onPrepare,onSave,onCancel}:{
+export function ExtraDetailScreen({field,value,onChange,busy,recording,uncertain,
+  onMic,onSave,onCancel}:{
   field:ExtraField;value:string;onChange:(value:string)=>void;busy:boolean;
-  recording:boolean;prepared:boolean;uncertain:boolean;
-  onMic:()=>void;onPrepare:()=>void;onSave:()=>void;onCancel:()=>void;
+  recording:boolean;uncertain:boolean;
+  onMic:()=>void;onSave:()=>void;onCancel:()=>void;
 }){
   return <KeyboardAvoidingView style={st.page}
     behavior={Platform.OS==="ios"?"padding":"height"} keyboardVerticalOffset={0}>
     <Header en={field.en} roman={field.roman} onBack={onCancel}/>
     <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{padding:22,paddingBottom:48}}>
       <Text style={[st.sub,{marginTop:0,marginBottom:13}]}>
-        Speak or write naturally. ABC will clean the wording without changing your meaning.
+        Speak or write naturally. ABC tidies the text automatically without changing its meaning.
       </Text>
       {field.help?<Text style={[st.note,{marginBottom:15}]}>{field.help}</Text>:null}
       <Field label="Your answer" roman="Apna jawaab" value={value}
@@ -147,23 +147,14 @@ export function ExtraDetailScreen({field,value,onChange,busy,recording,prepared,
           <Text style={{fontSize:15,fontWeight:"700",color:T.ink}}>
             {recording?"Listening. Tap to stop.":"Speak your answer"}
           </Text>
-          <Text style={st.note}>Aapki awaaz likhi jayegi. Save khud karein.</Text>
+          <Text style={st.note}>Voice is cleaned automatically. Review, then Save.</Text>
         </View>
       </View>
-      {prepared?<View style={{backgroundColor:T.light,borderRadius:13,padding:13,marginBottom:16}}>
-        <Text style={{fontSize:15,fontWeight:"700",color:T.accent}}>
-          {uncertain?"Check the spelling, especially names":"Cleaned draft ready"}
-        </Text>
-        <Text style={[st.note,{marginTop:6,color:T.ink}]}>
-          You can edit the text above. Any changes can be cleaned again before saving.
-        </Text>
-      </View>:null}
-      <Btn en={prepared?"Clean again with Gemini":"Clean and review"}
-        roman="Gemini se saaf karein" onPress={onPrepare}
-        disabled={busy||recording||!value.trim()}/>
-      <View style={{height:12}}/>
+      {uncertain?<Text style={[st.note,{marginBottom:16,color:T.danger}]}>
+        Please check the spelling of names before saving.
+      </Text>:null}
       <Btn en="Save this detail" roman="Jaankari save karein" onPress={onSave}
-        disabled={!prepared||busy||recording||!value.trim()}/>
+        disabled={busy||recording||!value.trim()}/>
       <View style={{height:12}}/>
       <Btn en="Cancel" roman="Rehne dein" secondary onPress={onCancel} disabled={busy||recording}/>
     </ScrollView>

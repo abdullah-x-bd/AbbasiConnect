@@ -132,8 +132,6 @@ function App(){
   const [biodataFileName,setBiodataFileName]=useState("ABC-Biodata.jpg");
   const [extraPath,setExtraPath]=useState("");
   const [extraValue,setExtraValue]=useState("");
-  const [extraPrepared,setExtraPrepared]=useState(false);
-  const [extraPreviewToken,setExtraPreviewToken]=useState("");
   const [extraUncertain,setExtraUncertain]=useState(false);
   const [extraRecording,setExtraRecording]=useState(false);
   const [deletePin,setDeletePin]=useState("");
@@ -192,7 +190,7 @@ function App(){
     if(SCREENS[i]==="enrichEdit"){
       setExtraPath("candidate.education.two_sentence_description");
       setExtraValue("I studied engineering in Delhi. I completed my degree there.");
-      setExtraPrepared(false);
+      
     }
     setError("");setScreen(SCREENS[i]);
   }
@@ -327,15 +325,15 @@ function App(){
     setExtraPath(field.path);
     const existing=readAt(session?.profile||account?.profile,field.path);
     setExtraValue(Array.isArray(existing)?existing.join(", "):existing==null?"":String(existing));
-    setExtraPrepared(false);setExtraPreviewToken("");setExtraUncertain(false);setExtraRecording(false);
+    setExtraUncertain(false);setExtraRecording(false);
     setScreen("enrichEdit");
   }
   function openExtras(back:"done"|"profile"){
     setExtraBack(back);setExtraPath("");setExtraValue("");
-    setExtraPrepared(false);setExtraPreviewToken("");setExtraUncertain(false);setScreen("enrich");
+    setExtraUncertain(false);setScreen("enrich");
   }
   function cancelExtra(){
-    setExtraPath("");setExtraValue("");setExtraPrepared(false);setExtraPreviewToken("");setExtraUncertain(false);
+    setExtraPath("");setExtraValue("");setExtraUncertain(false);
     setScreen("enrich");
   }
   async function toggleExtraVoice(){
@@ -351,7 +349,7 @@ function App(){
           method:"POST",body:{data,format:"m4a"}
         });
         setExtraValue(old=>old.trim()?old.trim()+" "+result.text:result.text);
-        setExtraPrepared(false);setExtraPreviewToken("");setExtraUncertain(Boolean(result.uncertain));
+        setExtraUncertain(Boolean(result.uncertain));
       });
       return;
     }
@@ -364,30 +362,17 @@ function App(){
       recorder.record();setExtraRecording(true);
     });
   }
-  async function prepareExtra(){
-    if(!extraPath||!extraValue.trim())return;
-    if(PREVIEW){setExtraPrepared(true);return;}
-    await task(async()=>{
-      const prepared=await api<{text:string;uncertain:boolean;previewToken:string}>("/abc/enrichment/prepare",{
-        method:"POST",body:{path:extraPath,text:extraValue.trim()}
-      });
-      setExtraValue(prepared.text);
-      setExtraPreviewToken(prepared.previewToken);
-      setExtraUncertain(prepared.uncertain);
-      setExtraPrepared(true);
-    });
-  }
   async function saveExtra(){
-    if(!extraPath||!session||!extraPrepared)return;
+    if(!extraPath||!session||!extraValue.trim())return;
     if(PREVIEW){setExtraPath("");setScreen("enrich");return;}
     await task(async()=>{
       const value=extraPath==="partner_preferences.preferred_cities_or_regions"?
         extraValue.split(",").map(x=>x.trim()).filter(Boolean):extraValue.trim();
       const result=await api<{session:Session}>("/abc/enrichment",{method:"POST",body:{
-        path:extraPath,value,version:session.version,previewToken:extraPreviewToken
+        path:extraPath,value,version:session.version
       }});
       setSession(result.session);
-      setExtraPath("");setExtraValue("");setExtraPrepared(false);setExtraPreviewToken("");setExtraUncertain(false);
+      setExtraPath("");setExtraValue("");setExtraUncertain(false);
       await refreshAccount();
       setScreen("enrich");
     });
@@ -910,9 +895,9 @@ function App(){
     if(screen==="enrichEdit")return <ExtraDetailScreen
       field={EXTRA_FIELDS.find(x=>x.path===extraPath)||EXTRA_FIELDS[0]}
       value={extraValue} busy={busy} recording={extraRecording}
-      prepared={extraPrepared} uncertain={extraUncertain}
-      onChange={value=>{setExtraValue(value);setExtraPrepared(false);setExtraPreviewToken("");}}
-      onMic={()=>void toggleExtraVoice()} onPrepare={()=>void prepareExtra()}
+      uncertain={extraUncertain}
+      onChange={setExtraValue}
+      onMic={()=>void toggleExtraVoice()}
       onSave={()=>void saveExtra()} onCancel={cancelExtra}/>;
     if(screen==="review")return reviewPage();
     if(screen==="explore")return showExplore();
