@@ -14,7 +14,7 @@ test("official ABC emblem included in the Android asset bundle without alteratio
   assert.equal(bytes.subarray(0,8).toString("hex"),"89504e470d0a1a0a");
   assert.equal(bytes.readUInt32BE(16),256);
   assert.equal(bytes.readUInt32BE(20),256);
-  const sha=createHash("sha1").update(Buffer.from("blob "+bytes.length+"\\0")).update(bytes).digest("hex");
+  const sha=createHash("sha1").update("blob "+bytes.length).update(Buffer.from([0])).update(bytes).digest("hex");
   assert.equal(sha,"67db78cf355164ee4b4b8565b076250ffaeafc2f");
 });
 test("same emblem used as launcher icon, adaptive icon and splash",()=>{
