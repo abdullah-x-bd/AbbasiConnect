@@ -557,7 +557,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
     const valid=normalizeField(body.data.path,body.data.value);
     if(!valid.ok)return reply.code(400).send({error:valid.error});
     const profile=setPath(acc.registration.profile as Profile,body.data.path,valid.value);
-    const states={...(acc.registration.fieldStates as FieldStates),
+    const states:FieldStates={...(acc.registration.fieldStates as FieldStates),
       [body.data.path]:valid.complete?"answered":"needs_clarification"};
     const saved=await store(readDraft(acc.registration),{profile,fieldStates:states});
     return {session:client(saved)};
