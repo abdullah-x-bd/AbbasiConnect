@@ -66,7 +66,15 @@ try{
   assert.ok(!ch.session.messages[0].text.includes("\n"));
   console.log("PASS early language/role/self/marital choices with inferred gender");
   console.log("PASS single-language grouped question without redundant gender");
-  const response=await req("/abc/reply","POST",{text:"My name is Sajid Alam. I am 29 years old and live in Delhi. My family is originally from Aligarh.",version:ch.session.version});
+  const objection=await req("/abc/reply","POST",{
+    text:"I already answered that.",version:ch.session.version
+  });
+  assert.notEqual(objection.session.currentQuestion,ch.session.currentQuestion,
+    "already-answered recovery must not repeat the same question");
+  assert.ok(objection.session.missingRequired.includes("candidate.full_name"),
+    "a deferred question must not be falsely marked answered");
+  assert.equal(objection.session.profile.candidate.marital_status,"never married");
+  const response=await req("/abc/reply","POST",{text:"My name is Sajid Alam. I am 29 years old and live in Delhi. My family is originally from Aligarh.",version:objection.session.version});
   assert.equal(response.session.profile.candidate.full_name,"Sajid Alam");
   const login=await req("/abc/login","POST",{phone,pin});
   token=login.token;assert.equal(login.phase,"COLLECTING");
