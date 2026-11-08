@@ -2,11 +2,12 @@ name: ABC Bahishti quality checks
 
 on:
   push:
-    branches: [main, "feature/abc-biodata-whatsapp-v13", "feature/abc-onboarding-surgical-v14", "feature/abc-roman-cleanup-enrichment-delete-v15", "feature/abc-ivory-forest-brand-v16", "feature/abc-auto-cheap-voice-cleanup-v161", "feature/abc-gpt-live-voice-onboarding-v17", "feature/abc-biodata-contact-v162"]
+    branches: [main, "feature/abc-biodata-whatsapp-v13", "feature/abc-onboarding-surgical-v14", "feature/abc-roman-cleanup-enrichment-delete-v15", "feature/abc-ivory-forest-brand-v16", "feature/abc-auto-cheap-voice-cleanup-v161", "feature/abc-gpt-live-voice-onboarding-v17", "feature/abc-voice-guardrails-v171", "feature/abc-biodata-contact-v162"]
     paths:
       - "apps/api/src/abc/**"
       - "apps/api/tests/abc-fields.test.mjs"
       - "apps/api/tests/abc-cleanup.test.mjs"
+      - "apps/api/tests/abc-voice-policy.test.mjs"
       - "apps/api/tests/abc-biodata.test.mjs"
       - "apps/api/tests/abc-biodata-preview.mjs"
       - "apps/api/package.json"
@@ -43,6 +44,8 @@ jobs:
         run: node --import tsx --test apps/api/tests/abc-fields.test.mjs
       - name: Validate Gemini Roman-script cleanup with a mocked model
         run: node --import tsx --test apps/api/tests/abc-cleanup.test.mjs
+      - name: Test enforced voice time, silence and five-distraction rules
+        run: node --import tsx --test apps/api/tests/abc-voice-policy.test.mjs
       - name: Test shareable JPEG biodata rendering and photo security
         run: node --import tsx --test apps/api/tests/abc-biodata.test.mjs
       - name: Render actual WhatsApp 4:5 biodata preview
@@ -56,5 +59,7 @@ jobs:
           retention-days: 30
       - name: Verify supplied ABC emblem and ivory-green theme
         run: node --test apps/bahishti/tests/brand-theme.test.mjs
+      - name: Validate voice-call limits, delegation fallback, and text-only Chat
+        run: node --test apps/bahishti/tests/voice-guardrails.test.mjs
       - name: Typecheck ABC Android app
         run: npm run typecheck -w @abbasiconnect/bahishti

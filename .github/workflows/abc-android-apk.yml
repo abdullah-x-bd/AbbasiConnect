@@ -2,7 +2,7 @@ name: ABC Bahishti Android APK
 
 on:
   push:
-    branches: [main, "feature/abc-biodata-whatsapp-v13", "feature/abc-onboarding-surgical-v14", "feature/abc-roman-cleanup-enrichment-delete-v15", "feature/abc-ivory-forest-brand-v16", "feature/abc-auto-cheap-voice-cleanup-v161", "feature/abc-gpt-live-voice-onboarding-v17"]
+    branches: [main, "feature/abc-biodata-whatsapp-v13", "feature/abc-onboarding-surgical-v14", "feature/abc-roman-cleanup-enrichment-delete-v15", "feature/abc-ivory-forest-brand-v16", "feature/abc-auto-cheap-voice-cleanup-v161", "feature/abc-gpt-live-voice-onboarding-v17", "feature/abc-voice-guardrails-v171"]
     paths:
       - "apps/bahishti/**"
       - ".github/workflows/abc-android-apk.yml"

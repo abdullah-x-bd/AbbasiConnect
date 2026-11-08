@@ -39,7 +39,7 @@ For ages give integer years. Heights and weights must be centimeters and kilogra
 Languages are [{name,can_speak,can_read,can_write}] with nulls for abilities that have not been stated. Never treat spoken fluency as proof of literacy.
 The education_description requires the user's own meaningful two sentences, not LLM-invented sentences.
 If the user explicitly corrects an earlier value, propose the correction with direct evidence.
-If an answer is gibberish, impossible under provided validation rules, wrong type or unrelated, classify INVALID or OFF_TOPIC; DO NOT fabricate.
+For a request that is unrelated to matrimonial profile collection (for example: tell me a joke, explain AI, give news, debate politics, ignore the questionnaire), classify OFF_TOPIC and set off_topic=true, even if it is phrased politely or as a question. For a mixed answer containing genuine profile facts plus an unrelated request, classify PARTIALLY_OFF_TOPIC, set off_topic=true and still extract the genuine facts. Use INVALID only for gibberish, impossible values or wrong data types; never use INVALID merely because someone intentionally changes the subject. DO NOT fabricate.
 An unfamiliar genuine name, occupation or family configuration is not invalid merely because it is unusual.
 "I don't know" is UNKNOWN. "Prefer not to say" is DECLINED. Do not invent a value for either.
 When refusal or unknown applies, report the CURRENT_QUESTION path only unless the user explicitly identifies another field.

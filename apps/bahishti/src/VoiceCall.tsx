@@ -5,7 +5,7 @@ import {api,type Session} from "./api";
 import {T,st,Btn,BrandLogo} from "./minimal-ui";
 
 type LiveEvent={
-  type:string;delta?:string;start_ms?:number;end_ms?:number;offset_ms?:number;
+  type:string;delta?:string;start_ms?:number;end_ms?:number;offset_ms?:number;audio_end_ms?:number;
   delegation?:{id:string;target:string};error?:{message?:string};
 };
 type SpokenPiece={text:string;start:number;end:number};
@@ -13,13 +13,17 @@ type Props={
   session:Session;preview?:boolean;
   onSession:(updated:Session)=>void;
   onSwitchToChat:()=>Promise<void>;
-  onEnd:()=>void;
+  onEnd:(reason?:"manual"|"silence"|"time_limit"|"connection_lost")=>void;
 };
 
 function displayError(error:unknown):string{
   return error instanceof Error?error.message:"The voice connection was interrupted.";
 }
 function clip(text:string):string{return text.trim().slice(0,440);}
+const MAX_CALL_MS=4*60*1000;
+const SILENCE_WARNING_MS=20*1000;
+const SILENCE_END_MS=30*1000;
+const UNRELATED_LIMIT=4;
 
 // Audio is carried by WebRTC media tracks. Only event/transcript metadata goes
 // over the data channel; no private API key or application database is exposed.
@@ -30,6 +34,10 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
   const [userCaption,setUserCaption]=useState("");
   const [error,setError]=useState("");
   const [saved,setSaved]=useState(0);
+  const [secondsLeft,setSecondsLeft]=useState(MAX_CALL_MS/1000);
+  const [unrelatedCount,setUnrelatedCount]=useState(0);
+  const unrelatedRef=useRef(0);
+  const [silenceWarning,setSilenceWarning]=useState(false);
   const sessionRef=useRef(session);
   const rtcRef=useRef<any>(null);
   const micRef=useRef<any>(null);
@@ -43,8 +51,19 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
   const lastCutRef=useRef(0);
   const timerRef=useRef<ReturnType<typeof setTimeout>|null>(null);
   const closeTimerRef=useRef<ReturnType<typeof setTimeout>|null>(null);
+  const watchdogRef=useRef<ReturnType<typeof setInterval>|null>(null);
+  const fallbackRef=useRef<ReturnType<typeof setTimeout>|null>(null);
+  const startedAtRef=useRef<number|null>(null);
+  const lastActivityRef=useRef(Date.now());
+  const silenceWarnedRef=useRef(false);
+  const lastSpeechEndRef=useRef(0);
+  const greetedRef=useRef(false);
+  const sessionStartedRef=useRef(false);
+  const onEndRef=useRef(onEnd);
   const onSessionRef=useRef(onSession);
-  useEffect(()=>{sessionRef.current=session;onSessionRef.current=onSession;},[session,onSession]);
+  useEffect(()=>{
+    sessionRef.current=session;onSessionRef.current=onSession;onEndRef.current=onEnd;
+  },[session,onSession,onEnd]);
 
   function send(type:string,details:Record<string,unknown>={}){
     const channel=dcRef.current;
@@ -62,6 +81,8 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     activeRef.current=false;
     if(timerRef.current)clearTimeout(timerRef.current);
     if(closeTimerRef.current)clearTimeout(closeTimerRef.current);
+    if(fallbackRef.current)clearTimeout(fallbackRef.current);
+    if(watchdogRef.current)clearInterval(watchdogRef.current);
     try{send("session.close");}catch{}
     try{dcRef.current?.close();}catch{}
     try{micRef.current?.getTracks().forEach((track:any)=>track.stop());}catch{}
@@ -70,13 +91,72 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     connectedRef.current=false;
   }
 
+  function endVoice(reason:"manual"|"silence"|"time_limit"|"connection_lost"){
+    if(!activeRef.current)return;
+    shutdown();
+    setStatus("ended");
+    onEndRef.current(reason);
+  }
+  function markActivity(){
+    lastActivityRef.current=Date.now();
+    silenceWarnedRef.current=false;
+    setSilenceWarning(false);
+  }
+  function startWatchdog(){
+    if(startedAtRef.current||!activeRef.current)return;
+    const now=Date.now();
+    startedAtRef.current=now;
+    lastActivityRef.current=now;
+    watchdogRef.current=setInterval(()=>{
+      if(!activeRef.current)return;
+      const elapsed=Date.now()-now;
+      setSecondsLeft(Math.max(0,Math.ceil((MAX_CALL_MS-elapsed)/1000)));
+      if(elapsed>=MAX_CALL_MS){endVoice("time_limit");return;}
+      if(busyRef.current)return; // do not treat slow validation as silence
+      const idle=Date.now()-lastActivityRef.current;
+      if(idle>=SILENCE_END_MS){endVoice("silence");return;}
+      if(idle>=SILENCE_WARNING_MS&&!silenceWarnedRef.current){
+        silenceWarnedRef.current=true;
+        setSilenceWarning(true);
+        notifySpeech("Are you still there? Please answer the current ABC question. The call will end if there is no response.",null);
+      }
+    },1000);
+  }
+  function markConnected(){
+    if(!activeRef.current)return;
+    if(!connectedRef.current){
+      connectedRef.current=true;
+      setStatus("connected");
+      startWatchdog();
+    }
+  }
+  function sendOpeningQuestion(){
+    // Per GPT-Live's protocol, client updates must follow session.started.
+    if(greetedRef.current||!sessionStartedRef.current||
+       dcRef.current?.readyState!=="open")return;
+    greetedRef.current=true;
+    const initial=[...sessionRef.current.messages].reverse().find(m=>m.role==="assistant")?.text||
+      "Please tell me your full name and age.";
+    notifySpeech("Welcome to ABC. Ask ONLY this profile question and listen: "+initial,null);
+  }
+  function scheduleTurnFallback(offset:number){
+    // A distracted live model may answer directly without delegating. Every
+    // completed audio turn still reaches the trusted ABC classification API.
+    if(fallbackRef.current)clearTimeout(fallbackRef.current);
+    fallbackRef.current=setTimeout(()=>{
+      if(!activeRef.current||offset<=lastCutRef.current)return;
+      if(pendingRef.current?.id)return; // the model delegated this turn
+      pendingRef.current={id:"local_"+offset,offset};
+      void flushDelegation();
+    },1900);
+  }
   async function flushDelegation(){
     if(!activeRef.current||busyRef.current||!pendingRef.current)return;
     const pending=pendingRef.current;
     if(handledRef.current.has(pending.id))return;
     const selected=transcriptRef.current.filter(x=>x.end>lastCutRef.current&&
       x.start<=pending.offset+500);
-    let heard=selected.map(x=>x.text).join("").trim();
+    const heard=selected.map(x=>x.text).join("").trim();
     if(!heard){
       // Allow transcript events to arrive slightly after delegation was created.
       if(timerRef.current)clearTimeout(timerRef.current);
@@ -87,46 +167,102 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     handledRef.current.add(pending.id);
     busyRef.current=true;
     setUserCaption(clip(heard));
-    lastCutRef.current=Math.max(lastCutRef.current,...selected.map(x=>x.end));
+    lastCutRef.current=Math.max(lastCutRef.current,pending.offset,...selected.map(x=>x.end));
     transcriptRef.current=transcriptRef.current.filter(x=>x.end>lastCutRef.current);
     try{
       const before=sessionRef.current;
-      const data=await api<{session:Session}>("/abc/reply",{
+      const data=await api<{session:Session;voiceDistractionCount?:number;voiceTermination?:string}>("/abc/reply",{
         method:"POST",body:{text:heard,version:before.version}
       });
       if(!activeRef.current)return;
       sessionRef.current=data.session;
-      onSessionRef.current(data.session);
       setSaved(data.session.progress);
+      const currentUnrelated=data.voiceDistractionCount||0;
+      const wasDistracted=currentUnrelated>unrelatedRef.current;
+      unrelatedRef.current=currentUnrelated;
+      setUnrelatedCount(currentUnrelated);
+      if(data.voiceTermination==="off_topic_limit"||
+         data.session.profile.registration?.onboarding_mode!=="voice"){
+        shutdown();
+        onSessionRef.current(data.session); // automatically continue in Chat
+        return;
+      }
+      onSessionRef.current(data.session);
       if(data.session.phase!=="COLLECTING"){
-        notifySpeech("Thank you. Your answers have been saved. Please review the profile on the screen.",pending.id);
-        closeTimerRef.current=setTimeout(()=>{shutdown();},2500);
+        shutdown(); // the completion screen now handles review
+        return;
+      }
+      const next=data.session.messages.at(-1)?.text||"Please continue with the next answer.";
+      const delegationId=pending.id.startsWith("local_")?null:pending.id;
+      if(wasDistracted){
+        send("session.instructions.append",{
+          delegation_id:delegationId,
+          content:"This was an unrelated response. Do not discuss its topic. Redirect immediately to the backend's profile question. Say only one or two short sentences."
+        });
+        notifySpeech("Please stay with the matrimonial profile questions. Ask this question and listen: "+next,delegationId);
       }else{
-        const next=data.session.messages.at(-1)?.text||"Please continue with the next answer.";
-        notifySpeech("The ABC backend saved the answer. Ask the following question naturally, then listen: "+next,pending.id);
+        notifySpeech("Ask the following saved ABC profile question naturally, then listen: "+next,delegationId);
       }
     }catch(exc){
+      if(!activeRef.current)return;
+      if(/four-minute|voice call has ended/i.test(displayError(exc))){
+        endVoice("time_limit");
+        return;
+      }
       setError("Your answer was not saved. "+displayError(exc));
-      // Allow the user to repeat rather than reporting an unconfirmed save.
-      notifySpeech("The answer could not be saved. Please ask the person to repeat their last answer.",pending.id);
-    }finally{busyRef.current=false;}
+      // Do not invent a saved answer or silently skip this question.
+      notifySpeech("The answer could not be saved. Please ask the person to repeat their last answer.",
+        pending.id.startsWith("local_")?null:pending.id);
+    }finally{
+      busyRef.current=false;
+      // A user may continue speaking while the previous answer is validated.
+      // Process that pending turn instead of silently discarding it.
+      if(activeRef.current){
+        if(pendingRef.current){
+          timerRef.current=setTimeout(()=>void flushDelegation(),320);
+        }else{
+          // An overlapping utterance can finish while the previous answer is
+          // being saved. Keep it queued instead of silently dropping it.
+          const latest=Math.max(lastSpeechEndRef.current,
+            ...transcriptRef.current.map(x=>x.end),0);
+          if(latest>lastCutRef.current)scheduleTurnFallback(latest);
+        }
+      }
+    }
   }
   function handleLiveEvent(raw:string){
     if(!activeRef.current)return;
     let msg:LiveEvent;
     try{msg=JSON.parse(raw);}catch{return;}
     if(msg.type==="session.started"){
-      connectedRef.current=true;setStatus("connected");
-      const initial=[...sessionRef.current.messages].reverse().find(m=>m.role==="assistant")?.text||
-        "Please tell me your full name and age.";
-      notifySpeech("Welcome to ABC. Ask this question and listen: "+initial,null);
+      sessionStartedRef.current=true;
+      markConnected();
+      sendOpeningQuestion();
       return;
     }
     if(msg.type==="session.output_transcript.delta"&&msg.delta){
+      // Speech generated by the 20-second "Are you there?" reminder must NOT
+      // reset the user's silence deadline. The call ends at 30 seconds unless
+      // the user actually speaks again.
+      if(!silenceWarnedRef.current)markActivity();
       setAssistant(old=>clip((old+" "+msg.delta).slice(-400)));
       return;
     }
+    if(msg.type==="input_audio_buffer.speech_started"){
+      markActivity();
+      if(fallbackRef.current)clearTimeout(fallbackRef.current);
+      lastSpeechEndRef.current=0;
+      return;
+    }
+    if(msg.type==="input_audio_buffer.speech_stopped"){
+      markActivity();
+      lastSpeechEndRef.current=Number(msg.audio_end_ms)||0;
+      if(lastSpeechEndRef.current>lastCutRef.current)
+        scheduleTurnFallback(lastSpeechEndRef.current);
+      return;
+    }
     if(msg.type==="session.input_transcript.delta"&&msg.delta){
+      markActivity();
       transcriptRef.current.push({
         text:msg.delta,start:Number(msg.start_ms)||0,end:Number(msg.end_ms)||0
       });
@@ -135,16 +271,29 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
         if(timerRef.current)clearTimeout(timerRef.current);
         timerRef.current=setTimeout(()=>void flushDelegation(),300);
       }
+      // GPT-Live transcript fragments contain reliable audio timestamps.
+      // Use a debounced transcript fallback even when the provider does not
+      // emit a VAD speech_stopped event for a particular device/session.
+      const lastTimestamp=Math.max(Number(msg.end_ms)||0,lastSpeechEndRef.current);
+      if(lastTimestamp>lastCutRef.current&&!pendingRef.current)
+        scheduleTurnFallback(lastTimestamp);
       return;
     }
     if(msg.type==="session.delegation.created"&&msg.delegation?.target==="client"){
-      pendingRef.current={id:msg.delegation.id,offset:Number(msg.offset_ms)||0};
+      const offset=Number(msg.offset_ms)||0;
+      if(offset>0&&offset<=lastCutRef.current){
+        notifySpeech("This user turn has already been checked by ABC. Follow the most recent saved profile question.",msg.delegation.id);
+        return;
+      }
+      if(fallbackRef.current)clearTimeout(fallbackRef.current);
+      pendingRef.current={id:msg.delegation.id,offset};
+      send("session.thinking.append",{delegation_id:msg.delegation.id,content:""});
       if(timerRef.current)clearTimeout(timerRef.current);
       timerRef.current=setTimeout(()=>void flushDelegation(),480);
       return;
     }
     if(msg.type==="error"){setError(msg.error?.message||"The voice service reported an error.");}
-    if(msg.type==="session.closed"){setStatus("ended");shutdown();}
+    if(msg.type==="session.closed")endVoice("connection_lost");
   }
   useEffect(()=>{
     activeRef.current=true;
@@ -166,8 +315,9 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
         const dc:any=pc.createDataChannel("oai-events");
         dcRef.current=dc;
         dc.onmessage=(event:any)=>handleLiveEvent(String(event.data));
+        dc.onopen=()=>{markConnected();sendOpeningQuestion();};
         dc.onerror=()=>setError("The live audio channel had an error.");
-        dc.onclose=()=>{if(activeRef.current)setStatus("ended");};
+        dc.onclose=()=>{if(activeRef.current)endVoice("connection_lost");};
         const offer=await pc.createOffer({offerToReceiveAudio:true});
         await pc.setLocalDescription(offer);
         // OpenAI's SDP exchange needs the final ICE candidates; avoid racing
@@ -181,16 +331,18 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
         });
         const sdp=pc.localDescription?.sdp||offer.sdp;
         if(!sdp)throw Error("Audio offer unavailable.");
-        const joined=await api<{sessionId:string;answer:string}>("/abc/live/connect",{
+        const joined=await api<{sessionId:string;answer:string;session:Session;maxDurationMs:number}>("/abc/live/connect",{
           method:"POST",body:{sdp}
         });
         if(!activeRef.current)return;
+        // The server increments the profile version when the paid call starts.
+        // Without syncing this, the first voice reply would be rejected as stale.
+        sessionRef.current=joined.session;
+        onSessionRef.current(joined.session);
         await pc.setRemoteDescription(new RTCSessionDescription({type:"answer",sdp:joined.answer}));
         started=true;
-        // Keep paid calls bounded; an interrupted interview remains resumable.
-        closeTimerRef.current=setTimeout(()=>{
-          if(activeRef.current){setError("Call limit reached. Your saved answers are safe.");shutdown();setStatus("ended");}
-        },12*60*1000);
+        markConnected();
+        sendOpeningQuestion();
       }catch(exc){
         if(activeRef.current){setError(displayError(exc));setStatus("error");shutdown();}
       }
@@ -220,7 +372,10 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     </View>
     <View style={{paddingHorizontal:24,paddingTop:24}}>
       <View style={st.progress}><View style={[st.progressFill,{width:(session.progress||saved)+"%"}]}/></View>
-      <Text style={[st.note,{textAlign:"right",marginTop:6}]}>{session.progress||saved}% saved</Text>
+      <View style={{flexDirection:"row",justifyContent:"space-between",marginTop:7}}>
+        <Text style={st.note}>{Math.floor(secondsLeft/60)}:{String(secondsLeft%60).padStart(2,"0")} remaining</Text>
+        <Text style={st.note}>{session.progress||saved}% saved</Text>
+      </View>
     </View>
     <ScrollView contentContainerStyle={{flexGrow:1,justifyContent:"center",alignItems:"center",padding:24,gap:20}}>
       <View style={{height:130,width:130,borderRadius:70,backgroundColor:T.light,
@@ -243,13 +398,19 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
         <Text style={st.note}>You / Aap</Text>
         <Text style={{color:T.ink,fontSize:16,marginTop:5}}>{userCaption}</Text>
       </View>:null}
+      {unrelatedCount>0?<Text style={[st.note,{textAlign:"center"}]}>
+        Unrelated replies: {unrelatedCount}/{UNRELATED_LIMIT}. The fifth ends the call.
+      </Text>:null}
+      {silenceWarning?<Text style={[st.note,{color:T.danger,textAlign:"center"}]}>
+        No response detected. The call will end after 30 seconds of silence.
+      </Text>:null}
       {error?<Text accessibilityRole="alert" style={{color:T.danger,textAlign:"center"}}>{error}</Text>:null}
     </ScrollView>
     <View style={{padding:20,borderTopColor:T.border,borderTopWidth:1,gap:10}}>
       <Btn en={muted?"Unmute microphone":"Mute microphone"} roman={muted?"Mic chalu karein":"Mic band karein"}
         secondary disabled={status!=="connected"} onPress={toggleMute}/>
       <Btn en="Switch to Chat" roman="Chat par jaayein" secondary onPress={()=>void swapToChat()}/>
-      <Btn en="End Call" roman="Call khatam karein" onPress={()=>{shutdown();onEnd();}}/>
+      <Btn en="End Call" roman="Call khatam karein" onPress={()=>endVoice("manual")}/>
     </View>
   </View>;
 }
