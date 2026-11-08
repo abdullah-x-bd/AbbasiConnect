@@ -12,7 +12,7 @@ import * as Sharing from "expo-sharing";
 import {BiodataScreen,EnrichmentScreen,ExtraDetailScreen,EXTRA_FIELDS,type ExtraField} from "./ExtraScreens";
 import {api,clearTokens,restoreTokens,setMemberToken,
   type Session,type Account,type Candidate} from "./api";
-import {T,st,H,Btn,Field,Circle,Back,Hr} from "./minimal-ui";
+import {T,st,H,Btn,Field,Circle,Back,Hr,BrandLogo} from "./minimal-ui";
 
 type Screen="loading"|"welcome"|"signupPhone"|"registered"|"verify"|"pinSignup"|"signin"|
   "language"|"purpose"|"for"|"relation"|"marital"|"chat"|"photoOffer"|"done"|"review"|
@@ -521,7 +521,7 @@ function App(){
     return <View style={styles.header}>
       <Back onPress={back}/>
       <View style={{flex:1}}><Text style={styles.headerText}>{title}</Text>{small?<Text style={styles.headerSmall}>{small}</Text>:null}</View>
-      <Text style={styles.headerABC}>ABC</Text>
+      <BrandLogo size={48}/>
     </View>;
   }
   function footer(active:"explore"|"interests"|"profile"){
@@ -621,8 +621,13 @@ function App(){
   }
   function showExplore(){
     return <View style={st.page}>
-      <View style={styles.exploreHeader}><Text style={st.logo}>ABC</Text>
-        <Text style={[st.note,{marginTop:3}]}>Explore / Rishte dekhein</Text></View>
+      <View style={[styles.exploreHeader,{flexDirection:"row",alignItems:"center",gap:12}]}>
+        <BrandLogo size={64}/>
+        <View style={{flex:1}}>
+          <Text style={{fontSize:24,fontWeight:"700",color:T.accent}}>AbbasiConnect</Text>
+          <Text style={[st.note,{marginTop:3}]}>Explore / Rishte dekhein</Text>
+        </View>
+      </View>
       <ScrollView contentContainerStyle={{paddingHorizontal:21,paddingTop:10,paddingBottom:25}} keyboardShouldPersistTaps="handled">
         <View style={styles.search}>
           <Text style={{fontSize:20,color:T.faint,marginRight:10}}>⌕</Text>
@@ -655,8 +660,12 @@ function App(){
   }
   function interestsScreen(){
     return <View style={st.page}>
-      <View style={styles.exploreHeader}><Text style={{fontSize:26,fontWeight:"700",color:T.ink}}>Interests</Text>
-        <Text style={st.roman}>Dilchaspi</Text></View>
+      <View style={[styles.exploreHeader,{flexDirection:"row",alignItems:"center"}]}>
+        <View style={{flex:1}}>
+          <Text style={{fontSize:26,fontWeight:"700",color:T.ink}}>Interests</Text>
+          <Text style={st.roman}>Dilchaspi</Text>
+        </View><BrandLogo size={52}/>
+      </View>
       <ScrollView contentContainerStyle={st.inner}>
         <Text style={styles.groupTitle}>Received / Jo aaye</Text>
         {!interests.received.length?<View style={styles.empty}><Text style={st.sub}>No interests yet.</Text>
@@ -677,8 +686,12 @@ function App(){
   }
   function profileScreen(){
     return <View style={st.page}>
-      <View style={styles.exploreHeader}><Text style={{fontSize:26,fontWeight:"700",color:T.ink}}>My profile</Text>
-        <Text style={st.roman}>Meri profile</Text></View>
+      <View style={[styles.exploreHeader,{flexDirection:"row",alignItems:"center"}]}>
+        <View style={{flex:1}}>
+          <Text style={{fontSize:26,fontWeight:"700",color:T.ink}}>My profile</Text>
+          <Text style={st.roman}>Meri profile</Text>
+        </View><BrandLogo size={52}/>
+      </View>
       <ScrollView contentContainerStyle={st.inner}>
         <View style={{alignItems:"center",marginBottom:27}}>
           {image?<Image source={{uri:image}} style={{height:96,width:96,borderRadius:48}}/>:
@@ -726,11 +739,12 @@ function App(){
 
   function content(){
     if(screen==="loading")return <View style={{flex:1,justifyContent:"center",alignItems:"center"}}>
-      <Text style={st.logo}>ABC</Text><ActivityIndicator style={{marginTop:20}} color={T.accent}/></View>;
+      <BrandLogo size={120}/><ActivityIndicator style={{marginTop:20}} color={T.accent}/></View>;
     if(screen==="welcome")return <View style={[st.page,{paddingHorizontal:28,justifyContent:"center"}]}>
-      <View style={{alignItems:"center",marginBottom:75}}>
-        <Text style={[st.logo,{fontSize:59,letterSpacing:-3}]}>ABC</Text>
-        <Text style={[st.app,{fontSize:18,textAlign:"center",marginTop:10}]}>Abbasi Bahishti Connections</Text>
+      <View style={{alignItems:"center",marginBottom:64}}>
+        <BrandLogo size={252}/>
+        <Text style={[st.app,{fontSize:19,textAlign:"center",marginTop:8,
+          fontWeight:"700",color:T.accent,letterSpacing:.5}]}>Abbasi Bahishti Connections</Text>
       </View>
       <Btn en="Sign up" roman="Naya account banayein" onPress={()=>setScreen("signupPhone")}/>
       <View style={{height:13}}/>

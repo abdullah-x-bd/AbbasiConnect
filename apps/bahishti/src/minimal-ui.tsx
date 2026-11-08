@@ -1,24 +1,31 @@
 import React from "react";
-import { Pressable, StyleSheet, Text, TextInput, View, type TextInputProps } from "react-native";
+import { Image, Pressable, StyleSheet, Text, TextInput, View, type TextInputProps } from "react-native";
 
+// ABC visual system sampled from the supplied ivory-and-forest-green emblem.
+// Existing data, routing and interaction behavior remain unchanged.
 export const T={
-  paper:"#FCFCFA",white:"#FFFFFF",ink:"#182626",muted:"#627270",faint:"#8F9B98",
-  accent:"#1E6257",light:"#E7F2EF",border:"#E2E9E6",line:"#F0F3F2",
-  danger:"#A44646",soft:"#F7F9F8"
+  paper:"#FAECD5",white:"#FFFAF1",ink:"#183B28",muted:"#685F50",faint:"#847866",
+  accent:"#0B5528",light:"#F0E2C8",border:"#E3D0B2",line:"#EADCC6",
+  danger:"#A4453B",soft:"#F7E8D0"
 };
+const BRAND_IMAGE=require("../assets/abc-emblem.png");
+export function BrandLogo({size=44}:{size?:number}){
+  return <Image accessibilityLabel="ABC Abbasi Bahishti Connections logo"
+    source={BRAND_IMAGE} resizeMode="contain" style={{width:size,height:size}}/>;
+}
 export const st=StyleSheet.create({
   page:{flex:1,backgroundColor:T.paper},inner:{paddingHorizontal:24,paddingTop:24,paddingBottom:42,flexGrow:1},
-  logo:{fontSize:35,fontWeight:"800",letterSpacing:-1.7,color:T.ink},
+  logo:{fontSize:35,fontWeight:"800",letterSpacing:-1.7,color:T.accent},
   app:{fontSize:14,color:T.muted,fontWeight:"600",marginTop:5,letterSpacing:.1},
   h:{fontSize:29,color:T.ink,fontWeight:"700",letterSpacing:-.65,lineHeight:37},
   sub:{fontSize:16,color:T.muted,lineHeight:24,marginTop:7},
   roman:{fontSize:16,color:T.accent,lineHeight:23,marginTop:3},
   note:{fontSize:13,color:T.faint,lineHeight:19},
   button:{minHeight:56,borderRadius:16,backgroundColor:T.accent,alignItems:"center",justifyContent:"center",
-    paddingVertical:13,paddingHorizontal:16},
-  secondary:{backgroundColor:T.white,borderWidth:1,borderColor:T.border},
+    paddingVertical:13,paddingHorizontal:16,shadowColor:"#143D29",shadowOpacity:.11,shadowRadius:7,elevation:2},
+  secondary:{backgroundColor:T.white,borderWidth:1,borderColor:T.border,shadowOpacity:0,elevation:0},
   btnTitle:{fontSize:17,color:T.white,fontWeight:"700",textAlign:"center"},
-  btnRoman:{fontSize:13,color:"#D4EBE5",marginTop:3,textAlign:"center",fontWeight:"500"},
+  btnRoman:{fontSize:13,color:"#E9E4CF",marginTop:3,textAlign:"center",fontWeight:"500"},
   input:{borderWidth:1.5,borderColor:T.border,borderRadius:15,minHeight:58,backgroundColor:T.white,
     color:T.ink,fontSize:19,paddingHorizontal:16,paddingVertical:12},
   inputLabel:{fontSize:14,color:T.ink,fontWeight:"600",marginBottom:10},
@@ -28,7 +35,7 @@ export const st=StyleSheet.create({
   card:{borderWidth:1,borderColor:T.border,borderRadius:20,padding:18,backgroundColor:T.white},
   chip:{backgroundColor:T.light,borderRadius:99,paddingHorizontal:10,paddingVertical:5},
   badge:{fontSize:12,color:T.accent,fontWeight:"700"},
-  tabbar:{flexDirection:"row",borderTopWidth:1,borderTopColor:T.border,backgroundColor:T.white,
+  tabbar:{flexDirection:"row",borderTopWidth:1,borderTopColor:T.border,backgroundColor:T.paper,
     paddingHorizontal:12,paddingTop:7,paddingBottom:5},
   tab:{flex:1,alignItems:"center",paddingVertical:8,gap:3},
   tabTxt:{fontSize:13,color:T.muted,fontWeight:"600"},

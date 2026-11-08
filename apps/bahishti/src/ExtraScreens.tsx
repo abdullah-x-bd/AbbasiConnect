@@ -1,6 +1,6 @@
 import React from "react";
 import {ActivityIndicator,Image,KeyboardAvoidingView,Platform,Pressable,ScrollView,Text,View} from "react-native";
-import {T,st,Btn,Field,Back,Circle} from "./minimal-ui";
+import {T,st,Btn,Field,Back,Circle,BrandLogo} from "./minimal-ui";
 
 export type ExtraField={path:string;en:string;roman:string;help?:string};
 export const EXTRA_FIELDS:ExtraField[]=[
@@ -31,7 +31,7 @@ function Header({en,roman,onBack}:{en:string;roman:string;onBack:()=>void}){
     <View style={{flex:1}}>
       <Text style={{fontSize:19,color:T.ink,fontWeight:"700"}}>{en}</Text>
       <Text style={{fontSize:12,color:T.muted,marginTop:2}}>{roman}</Text>
-    </View><Text style={{fontSize:19,color:T.accent,fontWeight:"800"}}>ABC</Text>
+    </View><BrandLogo size={48}/>
   </View>;
 }
 export function BiodataScreen({jpegUri,profile,photoUri,busy,onBack,onSave,onShare}:{
@@ -49,7 +49,7 @@ export function BiodataScreen({jpegUri,profile,photoUri,busy,onBack,onSave,onSha
         <Image accessibilityLabel="Generated JPEG matrimonial biodata preview" source={{uri:jpegUri}}
           resizeMode="contain" style={{width:"100%",aspectRatio:1080/1350,borderRadius:12,backgroundColor:T.white,
             borderWidth:1,borderColor:T.border}}/>:
-        <View style={{backgroundColor:"#FCFCFA",borderRadius:14,borderWidth:1,borderColor:T.border,
+        <View style={{backgroundColor:T.white,borderRadius:14,borderWidth:1,borderColor:T.border,
           minHeight:430,padding:22}}>
           <View style={{flexDirection:"row",alignItems:"center",gap:10,marginBottom:19}}>
             <View style={{width:40,height:40,borderRadius:10,backgroundColor:T.accent,

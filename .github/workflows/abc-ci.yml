@@ -2,7 +2,7 @@ name: ABC Bahishti quality checks
 
 on:
   push:
-    branches: [main, "feature/abc-biodata-whatsapp-v13", "feature/abc-onboarding-surgical-v14", "feature/abc-roman-cleanup-enrichment-delete-v15"]
+    branches: [main, "feature/abc-biodata-whatsapp-v13", "feature/abc-onboarding-surgical-v14", "feature/abc-roman-cleanup-enrichment-delete-v15", "feature/abc-ivory-forest-brand-v16"]
     paths:
       - "apps/api/src/abc/**"
       - "apps/api/tests/abc-fields.test.mjs"
