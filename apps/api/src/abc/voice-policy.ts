@@ -18,6 +18,17 @@ export function isVoiceRepeatRequest(text:string):boolean{
   const input=text.toLowerCase().replace(/[.!?।؟]+/g,"").trim().replace(/\s+/g," ");
   return /^(please )?(repeat( that| the question| it)?|say (that|it|the question) again|ask (that|the question) again|what was the question|can you (please )?repeat( that| the question)?|could you (please )?repeat( that| the question)?|can you say that again|i did not hear (you|that)|i didn't hear (you|that)|dobara (boliye|bolen|bataiye|batayein|poochhiye|puchiye)|phir se (boliye|bataiye|batayein|poochhiye|puchiye)|samajh nahi aaya|suna nahi|kya kaha)$/.test(input);
 }
+/**
+ * This is a complaint about interview state, NOT a request to hear the same
+ * question again. Process it as a recovery request, never as off-topic speech.
+ */
+export function isVoiceAlreadyProvided(text:string):boolean{
+  const t=text.toLowerCase().replace(/[.!?।؟,]+/g," ").replace(/\s+/g," ").trim();
+  return /\b(already|before|earlier|previously)\b.{0,75}\b(answered|said|told|mentioned|shared|provided|gave|explained)\b/.test(t)||
+    /\b(answered|said|told|mentioned|shared|provided|gave|explained)\b.{0,75}\b(already|before|earlier|previously)\b/.test(t)||
+    /\b(i (have|'ve|had) (already )?(answered|told|said|mentioned|shared|provided)|you (already )?(asked|have asked) (me )?that)\b/.test(t)||
+    /\b(pehle( hi)? (bata|bataya|bola|keh|kah|de diya)|bata (diya|chuka|chuki)|bataya (tha|hai)|pehle hi jawab|already bata)\b/.test(t);
+}
 export function isVoiceDistraction(x:VoiceClassification):boolean{
   return Boolean(x.off_topic)||x.classification==="OFF_TOPIC"||
     x.classification==="PARTIALLY_OFF_TOPIC";
