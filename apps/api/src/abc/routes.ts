@@ -136,7 +136,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
     ok:true,service:"abbasi-bahishti-connections",aiConfigured:openRouterConfigured(),
     smsConfigured:Boolean(process.env.ABC_SMS_NUMBER&&process.env.ABC_SMS_WEBHOOK_SECRET),
     model:process.env.ABC_OPENROUTER_MODEL||"google/gemini-3.1-flash-lite",
-    voiceContract:"canonical-question-v2.1"
+    voiceContract:"canonical-question-v2.2"
   }));
 
   // An early, rate-limited duplicate-number check, before verification or PIN.
