@@ -9,19 +9,19 @@ import * as Speech from "expo-speech";
 import * as ImagePicker from "expo-image-picker";
 import {File,Paths,Directory} from "expo-file-system";
 import * as Sharing from "expo-sharing";
-import {BiodataScreen,EnrichmentScreen,EXTRA_FIELDS,type ExtraField} from "./ExtraScreens";
+import {BiodataScreen,EnrichmentScreen,ExtraDetailScreen,EXTRA_FIELDS,type ExtraField} from "./ExtraScreens";
 import {api,clearTokens,restoreTokens,setMemberToken,
   type Session,type Account,type Candidate} from "./api";
 import {T,st,H,Btn,Field,Circle,Back,Hr} from "./minimal-ui";
 
 type Screen="loading"|"welcome"|"signupPhone"|"registered"|"verify"|"pinSignup"|"signin"|
   "language"|"purpose"|"for"|"relation"|"marital"|"chat"|"photoOffer"|"done"|"review"|
-  "explore"|"interests"|"profile"|"paused"|"biodata"|"enrich";
+  "explore"|"interests"|"profile"|"paused"|"biodata"|"enrich"|"enrichEdit"|"deleteAccount";
 type Interest={id:string;name:string;status:string;note?:string};
 const PREVIEW=process.env.EXPO_PUBLIC_ABC_PREVIEW==="1";
 const SCREENS:Screen[]=["welcome","signupPhone","registered","verify","pinSignup","signin",
   "language","purpose","for","relation","marital","chat","photoOffer","done","review",
-  "explore","interests","profile","paused","biodata","enrich"];
+  "explore","interests","profile","deleteAccount","paused","biodata","enrich","enrichEdit"];
 const sampleProfile:any={
   schema_version:"1.0.0",
   registration:{preferred_language:"roman",preferred_script:"roman",looking_for:"bride",
@@ -131,6 +131,10 @@ function App(){
   const [biodataFileName,setBiodataFileName]=useState("ABC-Biodata.jpg");
   const [extraPath,setExtraPath]=useState("");
   const [extraValue,setExtraValue]=useState("");
+  const [extraPrepared,setExtraPrepared]=useState(false);
+  const [extraUncertain,setExtraUncertain]=useState(false);
+  const [extraRecording,setExtraRecording]=useState(false);
+  const [deletePin,setDeletePin]=useState("");
   const [extraBack,setExtraBack]=useState<"done"|"profile">("done");
   const [biodataBack,setBiodataBack]=useState<"done"|"profile">("done");
   const scrollRef=useRef<ScrollViewInstance|null>(null);
@@ -183,6 +187,11 @@ function App(){
   function previewNext(){
     const i=(previewIndex+1)%SCREENS.length;
     setPreviewIndex(i);
+    if(SCREENS[i]==="enrichEdit"){
+      setExtraPath("candidate.education.two_sentence_description");
+      setExtraValue("I studied engineering in Delhi. I completed my degree there.");
+      setExtraPrepared(false);
+    }
     setError("");setScreen(SCREENS[i]);
   }
   function speakMessage(answer:string){
@@ -313,22 +322,68 @@ function App(){
 
   function optionalSelect(field:ExtraField){
     setExtraPath(field.path);
-    const value=field.path?readAt(session?.profile||account?.profile,field.path):"";
-    setExtraValue(Array.isArray(value)?value.join(", "):value==null?"":String(value));
+    const existing=readAt(session?.profile||account?.profile,field.path);
+    setExtraValue(Array.isArray(existing)?existing.join(", "):existing==null?"":String(existing));
+    setExtraPrepared(false);setExtraUncertain(false);setExtraRecording(false);
+    setScreen("enrichEdit");
   }
   function openExtras(back:"done"|"profile"){
-    setExtraBack(back);setExtraPath("");setExtraValue("");setScreen("enrich");
+    setExtraBack(back);setExtraPath("");setExtraValue("");
+    setExtraPrepared(false);setExtraUncertain(false);setScreen("enrich");
+  }
+  function cancelExtra(){
+    setExtraPath("");setExtraValue("");setExtraPrepared(false);setExtraUncertain(false);
+    setScreen("enrich");
+  }
+  async function toggleExtraVoice(){
+    if(extraRecording){
+      if(PREVIEW){setExtraRecording(false);setExtraValue("Maine Delhi mein engineering padhi. Maine wahin degree poori ki.");return;}
+      await task(async()=>{
+        await recorder.stop();
+        setExtraRecording(false);
+        if(!recorder.uri)throw Error("No recording was captured.");
+        const data=await new File(recorder.uri).base64();
+        if(data.length>1200000)throw Error("Please speak for a shorter time.");
+        const result=await api<{text:string;uncertain?:boolean}>("/abc/audio/transcribe",{
+          method:"POST",body:{data,format:"m4a"}
+        });
+        setExtraValue(old=>old.trim()?old.trim()+" "+result.text:result.text);
+        setExtraPrepared(false);setExtraUncertain(Boolean(result.uncertain));
+      });
+      return;
+    }
+    if(PREVIEW){setExtraRecording(true);return;}
+    await task(async()=>{
+      const permission=await AudioModule.requestRecordingPermissionsAsync();
+      if(!permission.granted)throw Error("Microphone access is needed to dictate a detail.");
+      await setAudioModeAsync({allowsRecording:true,playsInSilentMode:true});
+      await recorder.prepareToRecordAsync();
+      recorder.record();setExtraRecording(true);
+    });
+  }
+  async function prepareExtra(){
+    if(!extraPath||!extraValue.trim())return;
+    if(PREVIEW){setExtraPrepared(true);return;}
+    await task(async()=>{
+      const prepared=await api<{text:string;uncertain:boolean}>("/abc/enrichment/prepare",{
+        method:"POST",body:{path:extraPath,text:extraValue.trim()}
+      });
+      setExtraValue(prepared.text);
+      setExtraUncertain(prepared.uncertain);
+      setExtraPrepared(true);
+    });
   }
   async function saveExtra(){
-    if(!extraPath||!session)return;
-    if(PREVIEW){setExtraPath("");return;}
+    if(!extraPath||!session||!extraPrepared)return;
+    if(PREVIEW){setExtraPath("");setScreen("enrich");return;}
     await task(async()=>{
       const value=extraPath==="partner_preferences.preferred_cities_or_regions"?
         extraValue.split(",").map(x=>x.trim()).filter(Boolean):extraValue.trim();
       const result=await api<{session:Session}>("/abc/enrichment",{method:"POST",body:{
         path:extraPath,value,version:session.version
       }});
-      setSession(result.session);setExtraPath("");setExtraValue("");
+      setSession(result.session);
+      setExtraPath("");setExtraValue("");setExtraPrepared(false);setExtraUncertain(false);
       await refreshAccount();
       setScreen("enrich");
     });
@@ -422,7 +477,20 @@ function App(){
   }
   async function logout(){
     await clearTokens();setAccount(null);setSession(null);setImage(null);
-    setText("");setPhone("+91");setScreen("welcome");
+    setText("");setPhone("+91");setDeletePin("");setScreen("welcome");
+  }
+  async function removeAccount(){
+    if(PREVIEW){await logout();return;}
+    await task(async()=>{
+      await api<{deleted:boolean}>("/abc/account",{method:"DELETE",body:{pin:deletePin}});
+      await logout();
+    });
+  }
+  function confirmAccountDeletion(){
+    Alert.alert("Delete your ABC account permanently?",
+      "Your profile, saved answers, private photo and interests will be deleted. This cannot be undone.",
+      [{text:"Cancel",style:"cancel"},
+        {text:"Delete account",style:"destructive",onPress:()=>void removeAccount()}]);
   }
   async function resume(){
     await task(async()=>{const r=await api<{session:Session}>("/abc/resume",{method:"POST",body:{}});goState(r.session);});
@@ -635,6 +703,12 @@ function App(){
         <Btn secondary en="Add More Details" roman="Aur jaankari dein" onPress={()=>openExtras("profile")}/>
         <View style={{height:18}}/>
         <Btn secondary en="Sign out" roman="Logout karein" onPress={()=>void logout()}/>
+        <View style={{height:18}}/>
+        <Pressable accessibilityRole="button" accessibilityLabel="Delete my account"
+          onPress={()=>{setDeletePin("");setScreen("deleteAccount");}}
+          style={{paddingVertical:14,alignItems:"center"}}>
+          <Text style={{color:T.danger,fontSize:15,fontWeight:"700"}}>Delete my account / Account delete karein</Text>
+        </Pressable>
         <View style={{height:20}}/>
         <Text style={[st.note,{textAlign:"center"}]}>
           Phone verification is not active in this test version. / Is version mein SMS tasdeeq abhi band hai.
@@ -791,12 +865,34 @@ function App(){
         <View style={{height:12}}/>
         <Btn en="Add More Details" roman="Aur jaankari dein" secondary onPress={()=>openExtras("done")}/>
       </View></View>;
+    if(screen==="deleteAccount")return <View style={st.page}>
+      {header("Delete account",()=>{setDeletePin("");setScreen("profile");},"Account hatayein")}
+      <ScrollView contentContainerStyle={st.inner} keyboardShouldPersistTaps="handled">
+        <H en="Delete your ABC account?" roman="Apna account hamesha ke liye hatayein?"/>
+        <Text style={[st.sub,{marginBottom:25}]}>
+          This will permanently remove your matrimonial profile, conversations, photo and interest requests.
+        </Text>
+        <Field label="Confirm with your PIN" roman="Apna PIN likhein"
+          value={deletePin} onChangeText={setDeletePin} numeric secure maxLength={6}/>
+        <Btn en="Delete account permanently" roman="Hamesha ke liye delete karein"
+          onPress={confirmAccountDeletion} disabled={busy||deletePin.length<4}/>
+        <View style={{height:13}}/>
+        <Btn en="Cancel" roman="Wapas jaayein" secondary
+          onPress={()=>{setDeletePin("");setScreen("profile");}}/>
+      </ScrollView>
+    </View>;
     if(screen==="biodata")return <BiodataScreen jpegUri={biodataUri} profile={profile}
       photoUri={image} busy={busy} onBack={()=>setScreen(biodataBack)}
       onSave={()=>void saveBiodata()} onShare={()=>void shareBiodata()}/>;
-    if(screen==="enrich")return <EnrichmentScreen profile={profile} busy={busy} selected={extraPath}
-      value={extraValue} setValue={setExtraValue} select={optionalSelect}
-      onSave={()=>void saveExtra()} onBack={()=>setScreen(extraBack)}/>;
+    if(screen==="enrich")return <EnrichmentScreen profile={profile} select={optionalSelect}
+      onBack={()=>setScreen(extraBack)}/>;
+    if(screen==="enrichEdit")return <ExtraDetailScreen
+      field={EXTRA_FIELDS.find(x=>x.path===extraPath)||EXTRA_FIELDS[0]}
+      value={extraValue} busy={busy} recording={extraRecording}
+      prepared={extraPrepared} uncertain={extraUncertain}
+      onChange={value=>{setExtraValue(value);setExtraPrepared(false);}}
+      onMic={()=>void toggleExtraVoice()} onPrepare={()=>void prepareExtra()}
+      onSave={()=>void saveExtra()} onCancel={cancelExtra}/>;
     if(screen==="review")return reviewPage();
     if(screen==="explore")return showExplore();
     if(screen==="interests")return interestsScreen();
