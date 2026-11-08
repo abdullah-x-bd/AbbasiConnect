@@ -54,7 +54,7 @@ You may not switch topics, tell jokes, discuss news, give recommendations or con
 Do not treat odd but plausible family structures, professions, names or backgrounds as false.
 If VALIDATION_ISSUE exists, clarify the issue and ask the SAME selected question. If the user declined a required question once, briefly explain why it is essential, and ask one final time. Never argue.
 If optional information was declined, accept it and move on. Never ask a declined optional field again.
-Always write EXACTLY two short lines, first plain simple English, then the same meaning in natural Roman-script Hinglish/Hindustani. No Devanagari characters, no Persian/Urdu-script characters. Use simple conversational vocabulary suitable for users with limited literacy. The backend\'s selected question may appear in English only or Roman Hindustani, but your reply MUST contain both.
+Use only PREFERRED_LANGUAGE for each reply: en for plain English, roman for natural Roman-script Hinglish/Hindustani, hi for Hindi, or ur for Urdu. Do not repeat the question in another language. If the user explicitly asks for clarification in another language, briefly clarify in that language, then return to the authorized question. Keep messages simple and short.
 Each language line must be short. One primary question per turn. Acknowledge their previous response only briefly.
 If the backend directive is READY, PAUSE, or BLOCKED, do not ask any question and next_question_id must be null.
 Never ask for an OTP, phone number, login PIN or password. Never introduce new required fields.
@@ -111,7 +111,7 @@ export async function extract(ctx:Context,message:string):Promise<Extracted>{
   const changes=raw.changes.filter((x:any)=>x&&typeof x.path==="string"&&typeof x.value_json==="string"&&typeof x.evidence==="string"&&["HIGH","MEDIUM","LOW"].includes(x.confidence)).slice(0,35);
   // Independently re-read the message if the first pass missed the current question.
   // This focused pass cannot authorize new fields; the backend still validates every proposal.
-  if(ctx.currentQuestion&&!changes.some((x:ProposedChange)=>x.path===ctx.currentQuestion)&&!["DECLINED","UNKNOWN","OFF_TOPIC","PAUSE","STOP"].includes(raw.classification)){
+  if(ctx.currentQuestion&&!changes.some((x:ProposedChange)=>x.path===ctx.currentQuestion)&&!raw.off_topic&&!["DECLINED","UNKNOWN","OFF_TOPIC","INVALID","PARTIALLY_OFF_TOPIC","PAUSE","STOP"].includes(raw.classification)){
     try{
       const second:any=await completion(EXTRACTION_PROMPT,JSON.stringify({
         ...contextPayload(ctx),LATEST_USER_MESSAGE:message,PRIOR_EXTRACTION_FIELDS:changes.map((x:ProposedChange)=>x.path),
@@ -137,16 +137,16 @@ export async function interview(params:{
   try{
     const out:any=await completion(INTERVIEWER_PROMPT,JSON.stringify(payload),"abc_interviewer",talkSchema,250);
     if(!out||typeof out.message!=="string"||out.message.trim().length<5||out.message.length>460)throw new Error("Bad message");
-    if(/[\u0600-\u06ff\u0900-\u097f]/u.test(out.message)||!out.message.includes("\n"))throw new Error("ABC only supports English plus Roman-script Hindustani");
+    if(ctx.language==="roman"&&/[\u0600-\u06ff\u0900-\u097f]/u.test(out.message))throw new Error("Unexpected script in Roman reply");
     if(next&&out.next_question_id!==next.path)throw new Error("Invalid next question");
     if(!next&&out.next_question_id!==null)throw new Error("Interview asked a question after completion");
     return {message:out.message.trim(),next_question_id:out.next_question_id,response_type:String(out.response_type||directive)};
   }catch{
     const lang=ctx.language;
-    if(next)return {message:(validationIssue?validationIssue+". ":"")+next.ask.en+"\n"+next.ask.roman,next_question_id:next.path,response_type:directive};
+    if(next)return {message:(validationIssue?validationIssue+". ":"")+next.ask[lang],next_question_id:next.path,response_type:directive};
     const msg=directive==="READY"?"Your profile is ready to review. Please check the details.":directive==="BLOCKED"?"This information is required. Your progress is saved; you can resume when ready.":"Your progress has been saved. You can return any time.";
     const roman=directive==="READY"?"Profile tayyar hai. Aap check kar sakte hain.":directive==="BLOCKED"?"Yeh jaankari zaroori hai. Aapki progress save hai.":"Aapki progress save hai. Baad mein jaari rakhein.";
-    return {message:msg+"\n"+roman,next_question_id:null,response_type:directive};
+    return {message:lang==="en"?msg:roman,next_question_id:null,response_type:directive};
   }
 }
 export async function transcribeAudio(data:string,format:"m4a"|"wav"|"mp3"){

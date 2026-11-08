@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {FIELDS,FIELD_MAP,freshProfile,freshStates,normalizeField,setPath,getPath,nextQuestion,missingRequired,allFieldsResolved,CORE_GROUPS,groupProgress} from "../src/abc/fields.ts";
+import {FIELDS,FIELD_MAP,freshProfile,freshStates,normalizeField,setPath,getPath,nextQuestion,missingRequired,allFieldsResolved,CORE_GROUPS,groupProgress,inferCandidateGender} from "../src/abc/fields.ts";
 
 test("all ABC fields have unique allowlisted paths and four language prompts",()=>{
   assert.equal(new Set(FIELDS.map(x=>x.path)).size,FIELDS.length);
@@ -93,4 +93,21 @@ test("optional qualifications and interests never extend the basic interview",()
     "candidate.education.two_sentence_description","partner_preferences.other_preferences"]){
     assert.equal(states[path],"not_asked");
   }
+});
+
+test("partner role implies candidate gender, but the value remains editable",()=>{
+  assert.equal(inferCandidateGender("bride"),"male");
+  assert.equal(inferCandidateGender("groom"),"female");
+  const profile=freshProfile();
+  const first=setPath(profile,"candidate.gender",inferCandidateGender("bride"));
+  assert.equal(first.candidate.gender,"male");
+  assert.equal(setPath(first,"candidate.gender","female").candidate.gender,"female");
+});
+test("deferring a question never counts it as completed",()=>{
+  const profile=freshProfile(),states=freshStates();
+  assert.equal(nextQuestion(profile,states).path,"candidate.full_name");
+  assert.equal(nextQuestion(profile,states,new Set(["candidate.full_name"])).path,"candidate.age_years");
+  assert.ok(missingRequired(states).includes("candidate.full_name"));
+  assert.equal(nextQuestion(profile,states,new Set(FIELDS.filter(x=>x.required).map(x=>x.path))),null);
+  assert.equal(allFieldsResolved(states),false);
 });
