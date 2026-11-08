@@ -284,9 +284,10 @@ export async function registerAbcRoutes(app:FastifyInstance){
     if(d.profile.registration.onboarding_mode!=="voice"||!current)
       return reply.code(409).send({error:"No active voice question"});
     const parsed=z.object({action:z.enum(["ready","timeout"]),
-      version:z.number().int().nonnegative(),questionPath:z.string().max(150)}).safeParse(request.body);
+      version:z.number().int().nonnegative(),questionPath:z.string().max(150).optional()}).safeParse(request.body);
     if(!parsed.success)return reply.code(400).send({error:"Invalid voice timer event"});
-    if(parsed.data.version!==d.version||parsed.data.questionPath!==current.path)
+    if(parsed.data.version!==d.version||
+       (parsed.data.questionPath!==undefined&&parsed.data.questionPath!==current.path))
       return reply.code(409).send({error:"Voice question changed. Refresh and retry."});
     if(voiceCallExpired(d.declines))return reply.code(409).send({error:"Voice Call reached four minutes."});
     const lang=getLanguage(d.profile);
@@ -354,7 +355,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
       version:z.number().int().nonnegative(),
       voiceTurnId:z.string().regex(/^[A-Za-z0-9_-]{12,96}$/).optional()}).safeParse(request.body);
     if(!body.success)return reply.code(400).send({error:"Enter an answer (up to 1500 characters)"});
-    const turnKey=body.data.voiceTurnId&&d.profile.registration.onboarding_mode==="voice"?
+    const turnKey=body.data.voiceTurnId?
       "__abc_voice_turn_"+createHash("sha256").update(body.data.voiceTurnId).digest("hex").slice(0,16):null;
     // Idempotent retries must work even when the first attempt completed the
     // interview, and before checking the caller's now-stale version.
