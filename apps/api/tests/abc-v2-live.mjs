@@ -42,6 +42,28 @@ try{
   assert.equal(tooSoon.action,"wait");
   assert.equal(tooSoon.session.phase,"COLLECTING");
   await req("/abc/live/connect","POST",{sdp:"invalid"},400);
+  // The new private Supabase timeline must persist validated assistant-only
+  // events, redact contacts, and ignore duplicate uploads on a reconnect.
+  const callId="abc_test_"+String(randomInt(10000000,99999999));
+  const sample={callId,events:[
+    {sequence:1,elapsedMs:1200,eventType:"question_issued",phase:"asking",
+      questionSequence:1,questionPath:"candidate.full_name",preview:"बताएं आपका नाम और उम्र"},
+    {sequence:2,elapsedMs:4200,eventType:"output_unexpected",phase:"processing",
+      questionSequence:1,questionPath:"candidate.full_name",
+      preview:"अच्छा, email example@example.com, +91 98765 43210"}
+  ]};
+  const uploaded=await req("/abc/live/events","POST",sample);
+  assert.equal(uploaded.stored,2);
+  assert.equal((await req("/abc/live/events","POST",sample)).stored,0);
+  const history=await req("/abc/live/events?callId="+callId);
+  assert.equal(history.events.length,2);
+  assert.equal(history.events[1].eventType,"output_unexpected");
+  assert.equal(history.events[1].questionSequence,1);
+  assert.ok(!history.events[1].preview.includes("example@example.com"));
+  assert.ok(!history.events[1].preview.includes("98765"));
+  assert.equal(history.retentionDays,14);
+  console.log("PASS Supabase audit event persistence, deduplication, private owner read and redaction");
+
   // Real extractor must retain two facts from a single voice turn, even when
   // neither is the question currently being asked.
   const spoken={text:"I completed a bachelor's degree in computer science at Aligarh Muslim University, and I work as a software engineer at Infosys.",
