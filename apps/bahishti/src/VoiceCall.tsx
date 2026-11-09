@@ -3,7 +3,8 @@ import {ActivityIndicator,ScrollView,Text,View} from "react-native";
 import {mediaDevices,RTCPeerConnection,RTCSessionDescription} from "react-native-webrtc";
 import {api,type Session} from "./api";
 import {T,st,Btn,BrandLogo} from "./minimal-ui";
-import {VoiceTurnCollector,audioLevels,humanTimer} from "./voice-turns";
+import {VoiceTurnCollector,audioLevels,humanTimer,shouldDrainStraySpeech,
+  STRAY_SPEECH_MAX_DRAIN_MS} from "./voice-turns";
 
 type Reason="manual"|"silence"|"time_limit"|"connection_lost";
 type Phase="connecting"|"asking"|"waiting"|"listening"|"processing"|"ended";
@@ -16,7 +17,8 @@ type Event={
 type VoiceAuditKind=
   "call_connected"|"session_started"|"question_issued"|
   "audio_enabled"|"audio_disabled"|"output_started"|"output_snapshot"|
-  "output_unexpected"|"stray_before_question"|"question_played"|
+  "output_unexpected"|"stray_before_question"|
+  "output_drain_started"|"output_drain_finished"|"question_played"|
   "user_speech_started"|"turn_finalized"|"answer_sent"|"answer_saved"|
   "answer_failed"|"delegation_created"|"timeout"|"voice_error"|"call_ended";
 type VoiceAuditItem={
@@ -62,7 +64,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
   const rtcRef=useRef<any>(null);
   const micRef=useRef<any>(null);
   const remoteAudioRef=useRef<any>(null);
-  const audioAllowedRef=useRef(true);
+  const audioAllowedRef=useRef(false);
   const channelRef=useRef<any>(null);
   const openaiReadyRef=useRef(false);
   const greetingSentRef=useRef(false);
@@ -105,6 +107,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
   const straySpeechRef=useRef("");
   const outputSnapshotLastRef=useRef(0);
   const straySnapshotLastRef=useRef(0);
+  const lastUnpromptedTranscriptAtRef=useRef(0);
   const unexpectedAudioLoggedRef=useRef(false);
 
   useEffect(()=>{
@@ -173,12 +176,27 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     if(track&&track.kind==="audio")try{track.enabled=allowed;}catch{}
     if(changed)audit(allowed?"audio_enabled":"audio_disabled",why);
   }
+  async function drainUnpromptedOutput(){
+    // Keep the receiver muted until a previous autonomous response has gone
+    // quiet. The model may ignore conversational prompts to remain silent.
+    if(!shouldDrainStraySpeech(lastUnpromptedTranscriptAtRef.current,Date.now()))return;
+    audit("output_drain_started","stray_output_pending",straySpeechRef.current);
+    const started=Date.now();
+    while(activeRef.current&&!collectorRef.current.hasText()&&
+          shouldDrainStraySpeech(lastUnpromptedTranscriptAtRef.current,Date.now())&&
+          Date.now()-started<STRAY_SPEECH_MAX_DRAIN_MS){
+      await sleep(120);
+    }
+    const capped=shouldDrainStraySpeech(lastUnpromptedTranscriptAtRef.current,Date.now());
+    audit("output_drain_finished",capped?"time_limit":"quiet");
+  }
   function issueQuestion(question:string,id:string|null=null){
     if(!activeRef.current)return;
     // Capture any unauthorized speech generated before the authorized question.
     if(straySpeechRef.current)
       audit("stray_before_question","prior_provider_output",straySpeechRef.current);
     straySpeechRef.current="";
+    lastUnpromptedTranscriptAtRef.current=0;
     outputSpeechRef.current="";
     unexpectedAudioLoggedRef.current=false;
     questionIssuedRef.current=Date.now();
@@ -192,8 +210,16 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     nextOutputLoggedRef.current=false;
     setPhase("asking");
     audit("question_issued",id?"delegation":"direct",question);
-    audioAllowed(true,"question_issued");
+    // The old receiver was being unmuted BEFORE the next question command.
+    // Send the command first; leave a tiny gate for buffered old audio.
+    audioAllowed(false,"authorized_question_preparing");
     sayQuestion(question,id);
+    const authorizedSequence=questionSeqRef.current;
+    setTimeout(()=>{
+      if(activeRef.current&&phaseRef.current==="asking"&&
+         questionSeqRef.current===authorizedSequence&&!collectorRef.current.hasText())
+        audioAllowed(true,"authorized_question_window");
+    },180);
   }
   function shutdown(){
     if(!activeRef.current)return;
@@ -304,7 +330,6 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
         sessionRef.current=res.session;
         setSaved(res.session.progress);
         const strikes=res.voiceDistractionCount||0;
-        const wasDistracted=strikes>unrelatedRef.current;
         unrelatedRef.current=strikes;
         setUnrelatedCount(strikes);
         const elapsed=Date.now()-started;
@@ -327,9 +352,17 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
         }
         const question=res.authorizedVoiceReply||res.session.currentQuestionText;
         if(!question){shutdown();return;}
-        const lead=wasDistracted?"Please stay with the profile questions. ":"";
+        // Wait for any unsolicited GPT-Live answer to finish silently.
+        // Never splice its tail into an unrelated authorized question.
+        await drainUnpromptedOutput();
+        if(!activeRef.current)return;
+        if(collectorRef.current.hasText()){
+          setPhase("listening");
+          audioAllowed(false,"user_resumed_during_drain");
+          return;
+        }
         setRepeatCount(0);
-        issueQuestion(lead+question,delegationId);
+        issueQuestion(question,delegationId);
         return;
       }catch(exc){
         if(!activeRef.current)return;
@@ -464,6 +497,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
         // These are the exact unsolicited phrases we previously could not see
         // on Render. Preserve only ASSISTANT output, never user transcripts.
         straySpeechRef.current=clip(straySpeechRef.current+msg.delta);
+        lastUnpromptedTranscriptAtRef.current=now;
         if(now-straySnapshotLastRef.current>=700){
           audit("output_unexpected","transcript_out_of_turn",straySpeechRef.current);
           straySnapshotLastRef.current=now;
