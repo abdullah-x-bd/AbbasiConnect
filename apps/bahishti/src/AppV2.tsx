@@ -1,6 +1,6 @@
 import React,{useEffect,useRef,useState} from "react";
 import {
-  ActivityIndicator,Alert,Image,Keyboard,KeyboardAvoidingView,Platform,Pressable,
+  ActivityIndicator,Alert,Image,Keyboard,KeyboardAvoidingView,Modal,Platform,Pressable,
   ScrollView,StatusBar,StyleSheet,Text,TextInput,View,type ScrollViewInstance
 } from "react-native";
 import {SafeAreaProvider,SafeAreaView} from "react-native-safe-area-context";
@@ -11,14 +11,22 @@ import * as Sharing from "expo-sharing";
 import {BiodataScreen,EnrichmentScreen,ExtraDetailScreen,EXTRA_FIELDS,type ExtraField} from "./ExtraScreens";
 import VoiceCall from "./VoiceCall";
 import {api,clearTokens,restoreTokens,setMemberToken,
-  type Session,type Account,type Candidate} from "./api";
+  type Session,type Account,type Candidate,type DiscoverResponse,type MatchPreferences} from "./api";
 import {T,st,H,Btn,Field,Circle,Back,Hr,BrandLogo} from "./minimal-ui";
 
 type Screen="loading"|"welcome"|"signupPhone"|"registered"|"verify"|"pinSignup"|"signin"|
   "language"|"purpose"|"for"|"relation"|"marital"|"mode"|"chat"|"voice"|"voiceStopped"|"photoOffer"|"done"|"review"|
-  "explore"|"interests"|"profile"|"paused"|"biodata"|"enrich"|"enrichEdit"|"deleteAccount";
+  "explore"|"interests"|"profile"|"matchPreferences"|"paused"|"biodata"|"enrich"|"enrichEdit"|"deleteAccount";
 type Interest={id:string;name:string;status:string;note?:string};
 const PREVIEW=process.env.EXPO_PUBLIC_ABC_PREVIEW==="1";
+type ExploreSort="relevance"|"nearest";
+type ExploreFilters={ageMin:string;ageMax:string;heightMin:string;heightMax:string;
+  maritalStatus:string;education:string;occupation:string};
+const noExploreFilters=():ExploreFilters=>({
+  ageMin:"",ageMax:"",heightMin:"",heightMax:"",
+  maritalStatus:"",education:"",occupation:""
+});
+const maritalOptions=["never married","divorced","widowed","separated","annulled","other"];
 const SCREENS:Screen[]=["welcome","signupPhone","registered","verify","pinSignup","signin",
   "language","purpose","for","relation","marital","mode","chat","voice","voiceStopped","photoOffer","done","review",
   "explore","interests","profile","deleteAccount","paused","biodata","enrich","enrichEdit"];
@@ -125,6 +133,24 @@ function App(){
   const [consent,setConsent]=useState(false);
   const [city,setCity]=useState("");
   const [candidates,setCandidates]=useState<Candidate[]>([]);
+  const [exploreLoading,setExploreLoading]=useState(false);
+  const [exploreError,setExploreError]=useState("");
+  const [exploreTotal,setExploreTotal]=useState(0);
+  const [explorePage,setExplorePage]=useState(1);
+  const [exploreHasMore,setExploreHasMore]=useState(false);
+  const [exploreCities,setExploreCities]=useState<{name:string;count:number}[]>([]);
+  const [exploreSort,setExploreSort]=useState<ExploreSort>("relevance");
+  const [exploreFilters,setExploreFilters]=useState<ExploreFilters>(noExploreFilters);
+  const [filterDraft,setFilterDraft]=useState<ExploreFilters>(noExploreFilters);
+  const [filterOpen,setFilterOpen]=useState(false);
+  const [sortOpen,setSortOpen]=useState(false);
+  const exploreRequestIdRef=useRef(0);
+  const [prefAgeMin,setPrefAgeMin]=useState("");
+  const [prefAgeMax,setPrefAgeMax]=useState("");
+  const [prefCities,setPrefCities]=useState("");
+  const [prefMarital,setPrefMarital]=useState("");
+  const [prefEducation,setPrefEducation]=useState("");
+  const [prefOccupation,setPrefOccupation]=useState("");
   const [interests,setInterests]=useState<{sent:Interest[];received:Interest[]}>({sent:[],received:[]});
   const [editPath,setEditPath]=useState("");
   const [editValue,setEditValue]=useState("");
@@ -180,6 +206,11 @@ function App(){
   },[]);
   useEffect(()=>{
     if(!PREVIEW&&account&&(screen==="chat"||screen==="profile"))void openPhoto();
+  },[screen,account?.member?.id]);
+  // Initial Explore navigation (login, completing interview, tab press) must
+  // trigger the query. Previously the screen rendered empty until Go was tapped.
+  useEffect(()=>{
+    if(!PREVIEW&&screen==="explore"&&account?.member?.id)void loadExplore({page:1});
   },[screen,account?.member?.id]);
   useEffect(()=>{
     if(screen!=="chat")return;
@@ -447,12 +478,104 @@ function App(){
       setScreen("explore");
     });
   }
+  async function loadExplore(options?:{
+    city?:string;sort?:ExploreSort;filters?:ExploreFilters;page?:number;append?:boolean
+  }){
+    if(PREVIEW)return;
+    const requestId=++exploreRequestIdRef.current;
+    const chosenFilters=options?.filters??exploreFilters;
+    const selectedCity=options?.city??city;
+    const selectedSort=options?.sort??exploreSort;
+    const page=options?.page??1;
+    setExploreLoading(true);setExploreError("");
+    const parts=[
+      "city="+encodeURIComponent(selectedCity.trim()),
+      "sort="+encodeURIComponent(selectedSort),
+      "page="+page,"limit=20"
+    ];
+    for(const [key,value] of Object.entries(chosenFilters)){
+      if(value.trim())parts.push(encodeURIComponent(key)+"="+encodeURIComponent(value.trim()));
+    }
+    try{
+      const result=await api<DiscoverResponse>("/abc/discover?"+parts.join("&"),{timeoutMs:25000});
+      if(requestId!==exploreRequestIdRef.current)return;
+      setCandidates(old=>options?.append?[...old,...result.candidates]:result.candidates);
+      setExploreCities(result.cities||[]);
+      setExploreTotal(result.total);
+      setExplorePage(result.page);
+      setExploreHasMore(result.hasMore);
+    }catch(e){
+      if(requestId===exploreRequestIdRef.current)
+        setExploreError(e instanceof Error?e.message:"Could not load profiles.");
+    }finally{
+      if(requestId===exploreRequestIdRef.current)setExploreLoading(false);
+    }
+  }
   async function search(){
     if(PREVIEW){setScreen("explore");return;}
+    if(screen!=="explore"){setScreen("explore");return;}
+    await loadExplore({page:1});
+  }
+  function applyCity(nextCity:string){
+    setCity(nextCity);
+    void loadExplore({city:nextCity,page:1});
+  }
+  function applyFilterDraft(){
+    setExploreFilters({...filterDraft});
+    setFilterOpen(false);
+    void loadExplore({filters:filterDraft,page:1});
+  }
+  function clearExploreFilters(){
+    const empty=noExploreFilters();
+    setFilterDraft(empty);setExploreFilters(empty);
+    setFilterOpen(false);
+    void loadExplore({filters:empty,page:1});
+  }
+  function applyExploreSort(next:ExploreSort){
+    setExploreSort(next);setSortOpen(false);
+    void loadExplore({sort:next,page:1});
+  }
+  async function togglePublished(next:boolean){
+    if(PREVIEW){setAccount(old=>old?{...old,visible:next}:old);return;}
     await task(async()=>{
-      const d=await api<{candidates:Candidate[]}>("/abc/discover?city="+encodeURIComponent(city));
-      setCandidates(d.candidates||[]);
-      setScreen("explore");
+      const data=await api<{visible:boolean}>("/abc/publish",{
+        method:"POST",body:{visible:next}
+      });
+      setAccount(old=>old?{...old,visible:data.visible}:old);
+      if(screen==="explore")await loadExplore({page:1});
+    });
+  }
+  function openMatchPreferences(){
+    const p=(session?.profile||account?.profile)?.partner_preferences||{};
+    const match=String(p.preferred_age_range||"").match(/(\d{2})\s*[-–]\s*(\d{2})/);
+    setPrefAgeMin(match?.[1]||"");
+    setPrefAgeMax(match?.[2]||"");
+    setPrefCities(Array.isArray(p.preferred_cities_or_regions)?
+      p.preferred_cities_or_regions.join(", "):"");
+    setPrefMarital(String(p.marital_status_preference||""));
+    setPrefEducation(String(p.education_preference||""));
+    setPrefOccupation(String(p.profession_preference||""));
+    setScreen("matchPreferences");
+  }
+  async function saveMatchPreferences(){
+    if(PREVIEW){setScreen("profile");return;}
+    const ageMin=prefAgeMin.trim(),ageMax=prefAgeMax.trim();
+    if(Boolean(ageMin)!==Boolean(ageMax)){
+      setError("Please enter both ages, or leave both blank.");return;
+    }
+    const preferred:MatchPreferences={
+      ageMin:ageMin?Number(ageMin):null,ageMax:ageMax?Number(ageMax):null,
+      cities:prefCities.split(",").map(x=>x.trim()).filter(Boolean),
+      maritalStatus:prefMarital||null,
+      education:prefEducation.trim(),occupation:prefOccupation.trim()
+    };
+    await task(async()=>{
+      const out=await api<{session:Session}>("/abc/match-preferences",{
+        method:"POST",body:preferred
+      });
+      setSession(out.session);
+      await refreshAccount();
+      setScreen("profile");
     });
   }
   async function interestsPage(){
