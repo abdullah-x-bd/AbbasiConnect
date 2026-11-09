@@ -55,7 +55,7 @@ const sampleSession:Session={
   currentQuestion:"family.father.profession",progress:46,missingRequired:["family.father.profession"],
   version:3,reviewConfirmed:false,phone:"+919876543210",visible:false
 };
-const sampleAccount:Account={member:{id:"preview",phone:"+919876543210"},profile:sampleProfile,visible:false,phase:"COMPLETE"};
+const sampleAccount:Account={member:{id:"preview",phone:"+919876543210",phoneVerified:false},profile:sampleProfile,visible:false,phase:"COMPLETE"};
 const categories:{id:string;label:string;roman:string;paths:string[]}[]=[
   {id:"candidate",label:"About the candidate",roman:"Umeedwar ke baare mein",paths:[
     "candidate.full_name","candidate.gender","candidate.age_years","candidate.height_cm","candidate.marital_status",
