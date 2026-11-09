@@ -29,7 +29,7 @@ jobs:
         run: |
           for i in $(seq 1 60); do
             contract=$(curl -fsS --max-time 20 https://abbasiconnect-api.onrender.com/abc/health || true)
-            if echo "$contract" | grep -q '"voiceContract":"canonical-question-v2.3"'; then
+            if echo "$contract" | grep -q '"discoveryContract":"reciprocal-ranking-v1"'; then
               echo "ABC canonical voice backend is live"
               exit 0
             fi
