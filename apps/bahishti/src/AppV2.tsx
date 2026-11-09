@@ -732,6 +732,9 @@ function App(){
     </View>;
   }
   function showExplore(){
+    const activeFilters=Object.values(exploreFilters).filter(v=>Boolean(v.trim())).length;
+    const narrow=(key:keyof ExploreFilters,value:string)=>
+      setFilterDraft(current=>({...current,[key]:value}));
     return <View style={st.page}>
       <View style={[styles.exploreHeader,{flexDirection:"row",alignItems:"center",gap:12}]}>
         <BrandLogo size={64}/>
@@ -740,34 +743,193 @@ function App(){
           <Text style={[st.note,{marginTop:3}]}>Explore / Rishte dekhein</Text>
         </View>
       </View>
-      <ScrollView contentContainerStyle={{paddingHorizontal:21,paddingTop:10,paddingBottom:25}} keyboardShouldPersistTaps="handled">
-        <View style={styles.search}>
+      <ScrollView contentContainerStyle={{paddingHorizontal:21,paddingTop:8,paddingBottom:25}}
+        keyboardShouldPersistTaps="handled">
+        <Text style={[st.inputLabel,{marginBottom:7}]}>Sheher / City</Text>
+        <View style={[styles.search,{marginBottom:10}]}>
           <Text style={{fontSize:20,color:T.faint,marginRight:10}}>⌕</Text>
-          <TextInput style={{flex:1,fontSize:16,color:T.ink}} placeholder="City / Shehar" accessibilityLabel="Search city"
-            placeholderTextColor={T.faint} value={city} onChangeText={setCity} onSubmitEditing={()=>void search()}/>
-          <Pressable accessibilityRole="button" accessibilityLabel="Search profiles" onPress={()=>void search()}>
+          <TextInput style={{flex:1,fontSize:16,color:T.ink}}
+            placeholder="All cities / Saare sheher" accessibilityLabel="Search city"
+            placeholderTextColor={T.faint} value={city} onChangeText={setCity}
+            onSubmitEditing={()=>void loadExplore({page:1})}/>
+          {city.trim()?<Pressable accessibilityRole="button" accessibilityLabel="Clear city filter"
+            onPress={()=>applyCity("")} style={{paddingHorizontal:9}}>
+            <Text style={{fontSize:19,color:T.muted}}>×</Text>
+          </Pressable>:null}
+          <Pressable accessibilityRole="button" accessibilityLabel="Search profiles"
+            onPress={()=>void loadExplore({page:1})}>
             <Text style={{fontSize:15,fontWeight:"700",color:T.accent}}>Go</Text>
           </Pressable>
         </View>
-        {!candidates.length?<View style={{alignItems:"center",paddingTop:80,paddingHorizontal:10}}>
-          <View style={{width:64,height:64,borderRadius:32,backgroundColor:T.light,alignItems:"center",justifyContent:"center",marginBottom:20}}>
-            <Text style={{fontSize:30,color:T.accent}}>♡</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{gap:8,paddingBottom:18}}>
+          {["All cities",...exploreCities.map(c=>c.name)].map((label,i)=>{
+            const selected=i===0?!city.trim():city.trim().toLowerCase()===label.toLowerCase();
+            return <Pressable key={label} accessibilityRole="button"
+              accessibilityLabel={label} onPress={()=>applyCity(i===0?"":label)}
+              style={[st.chip,{paddingHorizontal:14,paddingVertical:8,
+                backgroundColor:selected?T.accent:T.light}]}>
+              <Text style={{fontSize:13,fontWeight:"600",color:selected?T.white:T.ink}}>{label}</Text>
+            </Pressable>;
+          })}
+        </ScrollView>
+        {!account?.visible?<View style={[st.card,{marginBottom:17,backgroundColor:T.soft}]}>
+          <Text style={{fontSize:16,fontWeight:"700",color:T.ink}}>Your profile is private</Text>
+          <Text style={[st.note,{marginTop:5,marginBottom:12}]}>
+            Only profiles that members choose to publish appear in Explore. Share your profile to be found by compatible members.
+          </Text>
+          <Btn en="Publish my profile" roman="Meri profile dikhayein" compact
+            onPress={()=>void togglePublished(true)}/>
+          {account?.member?.phoneVerified===false?<Text style={[st.note,{marginTop:8}]}>
+            Pilot account: your phone number is not yet SMS verified.
+          </Text>:null}
+        </View>:null}
+        <View style={{flexDirection:"row",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+          <View style={{flex:1}}>
+            <Text style={[styles.groupTitle,{marginBottom:2}]}>
+              {exploreSort==="nearest"?"Nearest cities first":"Recommended for you"}
+            </Text>
+            <Text style={st.note}>{exploreTotal} compatible published profile{exploreTotal===1?"":"s"}</Text>
           </View>
-          <Text style={{fontSize:22,fontWeight:"700",color:T.ink,textAlign:"center"}}>No profiles here yet</Text>
-          <Text style={[st.sub,{textAlign:"center"}]}>Abhi yahan koi profile nahi hai.</Text>
-          <Text style={[st.note,{textAlign:"center",marginTop:12}]}>Profiles appear when members choose to share them.</Text>
-        </View>:candidates.map(c=><View key={c.profileId} style={[st.card,{marginBottom:13}]}>
+          {exploreLoading?<ActivityIndicator color={T.accent} size="small"/>:null}
+        </View>
+        {exploreError?<View style={[st.card,{marginBottom:14}]}>
+          <Text style={{color:T.danger}}>{exploreError}</Text>
+          <View style={{marginTop:12}}><Btn compact secondary en="Try again" roman="Dobara dekhein"
+            onPress={()=>void loadExplore({page:1})}/></View>
+        </View>:null}
+        {!exploreLoading&&!exploreError&&candidates.length===0?
+          <View style={{alignItems:"center",paddingTop:46,paddingBottom:58,paddingHorizontal:10}}>
+            <View style={{width:64,height:64,borderRadius:32,backgroundColor:T.light,
+              alignItems:"center",justifyContent:"center",marginBottom:20}}>
+              <Text style={{fontSize:30,color:T.accent}}>♡</Text>
+            </View>
+            <Text style={{fontSize:21,fontWeight:"700",color:T.ink,textAlign:"center"}}>
+              No matching published profiles yet
+            </Text>
+            <Text style={[st.sub,{textAlign:"center"}]}>
+              Try All cities or clear your filters. Private profiles stay hidden until published.
+            </Text>
+          </View>:candidates.map(c=><View key={c.profileId} style={[st.card,{marginBottom:13}]}>
           <View style={{flexDirection:"row",gap:12,alignItems:"center"}}>
-            <View style={styles.avatar}><Text style={{fontSize:23,color:T.accent,fontWeight:"700"}}>{String(c.name||"?").slice(0,1)}</Text></View>
-            <View style={{flex:1}}><Text style={{fontSize:19,fontWeight:"700",color:T.ink}}>{c.name}</Text>
-              <Text style={st.note}>{[c.age?c.age+" years":null,c.city,c.education].filter(Boolean).join(" · ")}</Text></View>
+            <View style={styles.avatar}>
+              <Text style={{fontSize:23,color:T.accent,fontWeight:"700"}}>
+                {String(c.name||"?").slice(0,1)}
+              </Text>
+            </View>
+            <View style={{flex:1}}>
+              <Text style={{fontSize:18,fontWeight:"700",color:T.ink}}>{c.name||"Candidate"}</Text>
+              <Text style={st.note}>
+                {[c.age?c.age+" years":null,c.city,c.education].filter(Boolean).join(" · ")}
+              </Text>
+              <Text style={[st.note,{fontSize:11,marginTop:2}]}>
+                {c.publicId} · {c.verified?"Phone verified":"Phone not verified"}
+              </Text>
+            </View>
           </View>
-          {c.occupation?<Text style={[st.sub,{marginTop:10}]}>{c.occupation}</Text>:null}
-          <View style={{marginTop:15}}><Btn compact en="I'm interested" roman="Dilchaspi hai"
-            onPress={()=>void interest(c.profileId)}/></View>
+          {c.occupation?<Text style={[st.sub,{marginTop:9}]}>{c.occupation}</Text>:null}
+          {c.matchReasons.length?<View style={{flexDirection:"row",flexWrap:"wrap",gap:7,marginTop:11}}>
+            {c.matchReasons.map(reason=><View key={reason} style={st.chip}>
+              <Text style={st.badge}>{reason}</Text>
+            </View>)}
+          </View>:null}
+          {exploreSort==="nearest"&&c.distanceKm!==null?
+            <Text style={[st.note,{marginTop:9}]}>
+              {c.distanceKm===0?"Same city":"Approx. "+c.distanceKm+" km between city centres"}
+            </Text>:null}
+          <View style={{marginTop:15}}>
+            <Btn compact en="I'm interested" roman="Dilchaspi hai"
+              onPress={()=>void interest(c.profileId)}/>
+          </View>
         </View>)}
+        {exploreHasMore&&!exploreError?<Btn en={exploreLoading?"Loading...":"Load more profiles"}
+          roman="Aur rishte dekhein" compact secondary disabled={exploreLoading}
+          onPress={()=>void loadExplore({page:explorePage+1,append:true})}/>:null}
       </ScrollView>
+      <View style={styles.exploreActions}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Filter profiles"
+          onPress={()=>{setFilterDraft({...exploreFilters});setFilterOpen(true);}}
+          style={styles.exploreActionButton}>
+          <Text style={styles.exploreActionText}>☷  Filter{activeFilters?" ("+activeFilters+")":""}</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Sort profiles"
+          onPress={()=>setSortOpen(true)} style={styles.exploreActionButton}>
+          <Text style={styles.exploreActionText}>↕  Sort</Text>
+        </Pressable>
+      </View>
       {footer("explore")}
+      <Modal animationType="slide" transparent visible={filterOpen}
+        onRequestClose={()=>setFilterOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalSheet}>
+            <Text style={[styles.groupTitle,{fontSize:23,marginBottom:3}]}>Filter Rishte</Text>
+            <Text style={[st.note,{marginBottom:18}]}>Find the profiles that fit your preferences</Text>
+            <ScrollView keyboardShouldPersistTaps="handled" style={{flexGrow:0}}
+              contentContainerStyle={{paddingBottom:12}}>
+              <View style={{flexDirection:"row",gap:12}}>
+                <View style={{flex:1}}><Field label="Age from" value={filterDraft.ageMin} numeric
+                  onChangeText={v=>narrow("ageMin",v)} placeholder="18" maxLength={2}/></View>
+                <View style={{flex:1}}><Field label="Age to" value={filterDraft.ageMax} numeric
+                  onChangeText={v=>narrow("ageMax",v)} placeholder="40" maxLength={2}/></View>
+              </View>
+              <View style={{flexDirection:"row",gap:12}}>
+                <View style={{flex:1}}><Field label="Height from (cm)" value={filterDraft.heightMin}
+                  numeric onChangeText={v=>narrow("heightMin",v)} placeholder="150" maxLength={3}/></View>
+                <View style={{flex:1}}><Field label="Height to (cm)" value={filterDraft.heightMax}
+                  numeric onChangeText={v=>narrow("heightMax",v)} placeholder="190" maxLength={3}/></View>
+              </View>
+              <Text style={st.inputLabel}>Marital status</Text>
+              <View style={{flexDirection:"row",flexWrap:"wrap",gap:7,marginBottom:16}}>
+                {["Any",...maritalOptions].map(value=>{
+                  const selected=filterDraft.maritalStatus===(value==="Any"?"":value);
+                  return <Pressable key={value} accessibilityRole="button"
+                    onPress={()=>narrow("maritalStatus",value==="Any"?"":value)}
+                    style={[st.chip,{paddingVertical:9,backgroundColor:selected?T.accent:T.light}]}>
+                    <Text style={{fontSize:13,color:selected?T.white:T.ink}}>{value}</Text>
+                  </Pressable>;
+                })}
+              </View>
+              <Field label="Education contains" value={filterDraft.education}
+                onChangeText={v=>narrow("education",v)} placeholder="e.g. graduate" maxLength={100}/>
+              <Field label="Occupation contains" value={filterDraft.occupation}
+                onChangeText={v=>narrow("occupation",v)} placeholder="e.g. teacher" maxLength={100}/>
+            </ScrollView>
+            <View style={{gap:10,marginTop:5}}>
+              <Btn en="Apply filters" roman="Filter lagayein" compact onPress={applyFilterDraft}/>
+              <View style={{flexDirection:"row",gap:10}}>
+                <View style={{flex:1}}><Btn en="Clear all" roman="Saaf karein" compact secondary
+                  onPress={clearExploreFilters}/></View>
+                <View style={{flex:1}}><Btn en="Cancel" roman="Rehne dein" compact secondary
+                  onPress={()=>setFilterOpen(false)}/></View>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      <Modal animationType="slide" transparent visible={sortOpen}
+        onRequestClose={()=>setSortOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalSheet}>
+            <Text style={[styles.groupTitle,{fontSize:23}]}>Sort Rishte</Text>
+            <Text style={[st.note,{marginBottom:16}]}>Choose how profiles are ordered</Text>
+            {([{id:"relevance",title:"Most relevant",description:"Prioritise reciprocal preferences and nearby cities"},
+              {id:"nearest",title:"Nearest first",description:"Approximate distance between cities, not exact addresses"}
+            ] as {id:ExploreSort;title:string;description:string}[]).map(option=>
+              <Pressable key={option.id} accessibilityRole="radio"
+                accessibilityState={{checked:exploreSort===option.id}}
+                onPress={()=>applyExploreSort(option.id)}
+                style={[st.card,{marginBottom:11,flexDirection:"row",alignItems:"center",gap:12,
+                  borderColor:exploreSort===option.id?T.accent:T.border}]}>
+                <Text style={{fontSize:23,color:T.accent}}>{exploreSort===option.id?"◉":"○"}</Text>
+                <View style={{flex:1}}>
+                  <Text style={{fontSize:16,color:T.ink,fontWeight:"700"}}>{option.title}</Text>
+                  <Text style={st.note}>{option.description}</Text>
+                </View>
+              </Pressable>)}
+            <Btn secondary compact en="Close" roman="Band karein" onPress={()=>setSortOpen(false)}/>
+          </View>
+        </View>
+      </Modal>
     </View>;
   }
   function interestsScreen(){
