@@ -9,6 +9,7 @@ on:
       - "apps/api/tests/abc-cleanup.test.mjs"
       - "apps/api/tests/abc-voice-policy.test.mjs"
       - "apps/api/tests/abc-voice-telemetry.test.mjs"
+      - "apps/api/tests/abc-discovery.test.mjs"
       - "apps/api/tests/abc-biodata.test.mjs"
       - "apps/api/tests/abc-biodata-preview.mjs"
       - "apps/api/package.json"
@@ -48,6 +49,8 @@ jobs:
         run: node --import tsx --test apps/api/tests/abc-cleanup.test.mjs
       - name: Test enforced voice time, silence and five-distraction rules
         run: node --import tsx --test apps/api/tests/abc-voice-policy.test.mjs
+      - name: Validate reciprocal Explore ranking, privacy, city filters and pagination
+        run: node --import tsx --test apps/api/tests/abc-discovery.test.mjs
       - name: Validate bounded private voice-event telemetry
         run: node --import tsx --test apps/api/tests/abc-voice-telemetry.test.mjs
       - name: Test shareable JPEG biodata rendering and photo security

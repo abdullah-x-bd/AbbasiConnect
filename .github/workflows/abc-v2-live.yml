@@ -6,6 +6,7 @@ on:
     paths:
       - "apps/api/src/abc/**"
       - "apps/api/tests/abc-v2-live.mjs"
+      - "apps/api/tests/abc-discovery-live.mjs"
       - "apps/api/tests/abc-v2-voice-clarification-live.mjs"
       - "apps/api/prisma/schema.prisma"
       - ".github/workflows/abc-v2-live.yml"
@@ -29,7 +30,7 @@ jobs:
         run: |
           for i in $(seq 1 60); do
             contract=$(curl -fsS --max-time 20 https://abbasiconnect-api.onrender.com/abc/health || true)
-            if echo "$contract" | grep -q '"voiceContract":"canonical-question-v2.3"'; then
+            if echo "$contract" | grep -q '"discoveryContract":"reciprocal-ranking-v1"'; then
               echo "ABC canonical voice backend is live"
               exit 0
             fi
@@ -41,6 +42,8 @@ jobs:
         run: node apps/api/tests/abc-v2-live.mjs
       - name: Test clarification of an ABC questionnaire term without off-topic drift
         run: node apps/api/tests/abc-v2-voice-clarification-live.mjs
+      - name: Test two real pilot profiles, Explore visibility, city aliases and ranking
+        run: node apps/api/tests/abc-discovery-live.mjs
       - name: Upload genuine JPEG sample for visual review
         if: always()
         uses: actions/upload-artifact@v4

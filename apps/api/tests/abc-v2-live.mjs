@@ -211,9 +211,17 @@ try{
   const me=await req("/abc/me");
   assert.equal(me.phase,"COMPLETE");
   assert.equal(me.member.phoneVerified,false);
-  await req("/abc/publish","POST",{visible:true},403);
-  await req("/abc/discover");
-  console.log("PASS Explore available, unverified number never falsely published");
+  assert.equal(me.visible,false,"completed profiles remain private by default");
+  const published=await req("/abc/publish","POST",{visible:true});
+  assert.equal(published.visible,true,"pilot members can explicitly opt in to publishing");
+  assert.equal((await req("/abc/me")).member.phoneVerified,false,
+    "publishing never fabricates phone verification");
+  const discover=await req("/abc/discover?sort=relevance&limit=10");
+  assert.ok(Array.isArray(discover.candidates));
+  assert.ok(Array.isArray(discover.cities));
+  assert.ok(!discover.candidates.some(c=>c.profileId===done.session.id));
+  assert.equal((await req("/abc/publish","POST",{visible:false})).visible,false);
+  console.log("PASS pilot opt-in publication, unverified status integrity and owner exclusion");
   const biodata=await req("/abc/biodata");
   assert.equal(biodata.mimeType,"image/jpeg");
   assert.equal(biodata.width,1080);assert.equal(biodata.height,1350);

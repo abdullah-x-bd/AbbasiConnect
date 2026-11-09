@@ -1,6 +1,6 @@
 import React,{useEffect,useRef,useState} from "react";
 import {
-  ActivityIndicator,Alert,Image,Keyboard,KeyboardAvoidingView,Platform,Pressable,
+  ActivityIndicator,Alert,Image,Keyboard,KeyboardAvoidingView,Modal,Platform,Pressable,
   ScrollView,StatusBar,StyleSheet,Text,TextInput,View,type ScrollViewInstance
 } from "react-native";
 import {SafeAreaProvider,SafeAreaView} from "react-native-safe-area-context";
@@ -11,14 +11,22 @@ import * as Sharing from "expo-sharing";
 import {BiodataScreen,EnrichmentScreen,ExtraDetailScreen,EXTRA_FIELDS,type ExtraField} from "./ExtraScreens";
 import VoiceCall from "./VoiceCall";
 import {api,clearTokens,restoreTokens,setMemberToken,
-  type Session,type Account,type Candidate} from "./api";
+  type Session,type Account,type Candidate,type DiscoverResponse,type MatchPreferences} from "./api";
 import {T,st,H,Btn,Field,Circle,Back,Hr,BrandLogo} from "./minimal-ui";
 
 type Screen="loading"|"welcome"|"signupPhone"|"registered"|"verify"|"pinSignup"|"signin"|
   "language"|"purpose"|"for"|"relation"|"marital"|"mode"|"chat"|"voice"|"voiceStopped"|"photoOffer"|"done"|"review"|
-  "explore"|"interests"|"profile"|"paused"|"biodata"|"enrich"|"enrichEdit"|"deleteAccount";
+  "explore"|"interests"|"profile"|"matchPreferences"|"paused"|"biodata"|"enrich"|"enrichEdit"|"deleteAccount";
 type Interest={id:string;name:string;status:string;note?:string};
 const PREVIEW=process.env.EXPO_PUBLIC_ABC_PREVIEW==="1";
+type ExploreSort="relevance"|"nearest";
+type ExploreFilters={ageMin:string;ageMax:string;heightMin:string;heightMax:string;
+  maritalStatus:string;education:string;occupation:string};
+const noExploreFilters=():ExploreFilters=>({
+  ageMin:"",ageMax:"",heightMin:"",heightMax:"",
+  maritalStatus:"",education:"",occupation:""
+});
+const maritalOptions=["never married","divorced","widowed","separated","annulled","other"];
 const SCREENS:Screen[]=["welcome","signupPhone","registered","verify","pinSignup","signin",
   "language","purpose","for","relation","marital","mode","chat","voice","voiceStopped","photoOffer","done","review",
   "explore","interests","profile","deleteAccount","paused","biodata","enrich","enrichEdit"];
@@ -47,7 +55,7 @@ const sampleSession:Session={
   currentQuestion:"family.father.profession",progress:46,missingRequired:["family.father.profession"],
   version:3,reviewConfirmed:false,phone:"+919876543210",visible:false
 };
-const sampleAccount:Account={member:{id:"preview",phone:"+919876543210"},profile:sampleProfile,visible:false,phase:"COMPLETE"};
+const sampleAccount:Account={member:{id:"preview",phone:"+919876543210",phoneVerified:false},profile:sampleProfile,visible:false,phase:"COMPLETE"};
 const categories:{id:string;label:string;roman:string;paths:string[]}[]=[
   {id:"candidate",label:"About the candidate",roman:"Umeedwar ke baare mein",paths:[
     "candidate.full_name","candidate.gender","candidate.age_years","candidate.height_cm","candidate.marital_status",
@@ -125,6 +133,24 @@ function App(){
   const [consent,setConsent]=useState(false);
   const [city,setCity]=useState("");
   const [candidates,setCandidates]=useState<Candidate[]>([]);
+  const [exploreLoading,setExploreLoading]=useState(false);
+  const [exploreError,setExploreError]=useState("");
+  const [exploreTotal,setExploreTotal]=useState(0);
+  const [explorePage,setExplorePage]=useState(1);
+  const [exploreHasMore,setExploreHasMore]=useState(false);
+  const [exploreCities,setExploreCities]=useState<{name:string;count:number}[]>([]);
+  const [exploreSort,setExploreSort]=useState<ExploreSort>("relevance");
+  const [exploreFilters,setExploreFilters]=useState<ExploreFilters>(noExploreFilters);
+  const [filterDraft,setFilterDraft]=useState<ExploreFilters>(noExploreFilters);
+  const [filterOpen,setFilterOpen]=useState(false);
+  const [sortOpen,setSortOpen]=useState(false);
+  const exploreRequestIdRef=useRef(0);
+  const [prefAgeMin,setPrefAgeMin]=useState("");
+  const [prefAgeMax,setPrefAgeMax]=useState("");
+  const [prefCities,setPrefCities]=useState("");
+  const [prefMarital,setPrefMarital]=useState("");
+  const [prefEducation,setPrefEducation]=useState("");
+  const [prefOccupation,setPrefOccupation]=useState("");
   const [interests,setInterests]=useState<{sent:Interest[];received:Interest[]}>({sent:[],received:[]});
   const [editPath,setEditPath]=useState("");
   const [editValue,setEditValue]=useState("");
@@ -180,6 +206,11 @@ function App(){
   },[]);
   useEffect(()=>{
     if(!PREVIEW&&account&&(screen==="chat"||screen==="profile"))void openPhoto();
+  },[screen,account?.member?.id]);
+  // Initial Explore navigation (login, completing interview, tab press) must
+  // trigger the query. Previously the screen rendered empty until Go was tapped.
+  useEffect(()=>{
+    if(!PREVIEW&&screen==="explore"&&account?.member?.id)void loadExplore({page:1});
   },[screen,account?.member?.id]);
   useEffect(()=>{
     if(screen!=="chat")return;
@@ -447,12 +478,104 @@ function App(){
       setScreen("explore");
     });
   }
+  async function loadExplore(options?:{
+    city?:string;sort?:ExploreSort;filters?:ExploreFilters;page?:number;append?:boolean
+  }){
+    if(PREVIEW)return;
+    const requestId=++exploreRequestIdRef.current;
+    const chosenFilters=options?.filters??exploreFilters;
+    const selectedCity=options?.city??city;
+    const selectedSort=options?.sort??exploreSort;
+    const page=options?.page??1;
+    setExploreLoading(true);setExploreError("");
+    const parts=[
+      "city="+encodeURIComponent(selectedCity.trim()),
+      "sort="+encodeURIComponent(selectedSort),
+      "page="+page,"limit=20"
+    ];
+    for(const [key,value] of Object.entries(chosenFilters)){
+      if(value.trim())parts.push(encodeURIComponent(key)+"="+encodeURIComponent(value.trim()));
+    }
+    try{
+      const result=await api<DiscoverResponse>("/abc/discover?"+parts.join("&"),{timeoutMs:25000});
+      if(requestId!==exploreRequestIdRef.current)return;
+      setCandidates(old=>options?.append?[...old,...result.candidates]:result.candidates);
+      setExploreCities(result.cities||[]);
+      setExploreTotal(result.total);
+      setExplorePage(result.page);
+      setExploreHasMore(result.hasMore);
+    }catch(e){
+      if(requestId===exploreRequestIdRef.current)
+        setExploreError(e instanceof Error?e.message:"Could not load profiles.");
+    }finally{
+      if(requestId===exploreRequestIdRef.current)setExploreLoading(false);
+    }
+  }
   async function search(){
     if(PREVIEW){setScreen("explore");return;}
+    if(screen!=="explore"){setScreen("explore");return;}
+    await loadExplore({page:1});
+  }
+  function applyCity(nextCity:string){
+    setCity(nextCity);
+    void loadExplore({city:nextCity,page:1});
+  }
+  function applyFilterDraft(){
+    setExploreFilters({...filterDraft});
+    setFilterOpen(false);
+    void loadExplore({filters:filterDraft,page:1});
+  }
+  function clearExploreFilters(){
+    const empty=noExploreFilters();
+    setFilterDraft(empty);setExploreFilters(empty);
+    setFilterOpen(false);
+    void loadExplore({filters:empty,page:1});
+  }
+  function applyExploreSort(next:ExploreSort){
+    setExploreSort(next);setSortOpen(false);
+    void loadExplore({sort:next,page:1});
+  }
+  async function togglePublished(next:boolean){
+    if(PREVIEW){setAccount(old=>old?{...old,visible:next}:old);return;}
     await task(async()=>{
-      const d=await api<{candidates:Candidate[]}>("/abc/discover?city="+encodeURIComponent(city));
-      setCandidates(d.candidates||[]);
-      setScreen("explore");
+      const data=await api<{visible:boolean}>("/abc/publish",{
+        method:"POST",body:{visible:next}
+      });
+      setAccount(old=>old?{...old,visible:data.visible}:old);
+      if(screen==="explore")await loadExplore({page:1});
+    });
+  }
+  function openMatchPreferences(){
+    const p=(session?.profile||account?.profile)?.partner_preferences||{};
+    const match=String(p.preferred_age_range||"").match(/(\d{2})\s*[-–]\s*(\d{2})/);
+    setPrefAgeMin(match?.[1]||"");
+    setPrefAgeMax(match?.[2]||"");
+    setPrefCities(Array.isArray(p.preferred_cities_or_regions)?
+      p.preferred_cities_or_regions.join(", "):"");
+    setPrefMarital(String(p.marital_status_preference||""));
+    setPrefEducation(String(p.education_preference||""));
+    setPrefOccupation(String(p.profession_preference||""));
+    setScreen("matchPreferences");
+  }
+  async function saveMatchPreferences(){
+    if(PREVIEW){setScreen("profile");return;}
+    const ageMin=prefAgeMin.trim(),ageMax=prefAgeMax.trim();
+    if(Boolean(ageMin)!==Boolean(ageMax)){
+      setError("Please enter both ages, or leave both blank.");return;
+    }
+    const preferred:MatchPreferences={
+      ageMin:ageMin?Number(ageMin):null,ageMax:ageMax?Number(ageMax):null,
+      cities:prefCities.split(",").map(x=>x.trim()).filter(Boolean),
+      maritalStatus:prefMarital||null,
+      education:prefEducation.trim(),occupation:prefOccupation.trim()
+    };
+    await task(async()=>{
+      const out=await api<{session:Session}>("/abc/match-preferences",{
+        method:"POST",body:preferred
+      });
+      setSession(out.session);
+      await refreshAccount();
+      setScreen("profile");
     });
   }
   async function interestsPage(){
@@ -609,6 +732,9 @@ function App(){
     </View>;
   }
   function showExplore(){
+    const activeFilters=Object.values(exploreFilters).filter(v=>Boolean(v.trim())).length;
+    const narrow=(key:keyof ExploreFilters,value:string)=>
+      setFilterDraft(current=>({...current,[key]:value}));
     return <View style={st.page}>
       <View style={[styles.exploreHeader,{flexDirection:"row",alignItems:"center",gap:12}]}>
         <BrandLogo size={64}/>
@@ -617,34 +743,193 @@ function App(){
           <Text style={[st.note,{marginTop:3}]}>Explore / Rishte dekhein</Text>
         </View>
       </View>
-      <ScrollView contentContainerStyle={{paddingHorizontal:21,paddingTop:10,paddingBottom:25}} keyboardShouldPersistTaps="handled">
-        <View style={styles.search}>
+      <ScrollView contentContainerStyle={{paddingHorizontal:21,paddingTop:8,paddingBottom:25}}
+        keyboardShouldPersistTaps="handled">
+        <Text style={[st.inputLabel,{marginBottom:7}]}>Sheher / City</Text>
+        <View style={[styles.search,{marginBottom:10}]}>
           <Text style={{fontSize:20,color:T.faint,marginRight:10}}>⌕</Text>
-          <TextInput style={{flex:1,fontSize:16,color:T.ink}} placeholder="City / Shehar" accessibilityLabel="Search city"
-            placeholderTextColor={T.faint} value={city} onChangeText={setCity} onSubmitEditing={()=>void search()}/>
-          <Pressable accessibilityRole="button" accessibilityLabel="Search profiles" onPress={()=>void search()}>
+          <TextInput style={{flex:1,fontSize:16,color:T.ink}}
+            placeholder="All cities / Saare sheher" accessibilityLabel="Search city"
+            placeholderTextColor={T.faint} value={city} onChangeText={setCity}
+            onSubmitEditing={()=>void loadExplore({page:1})}/>
+          {city.trim()?<Pressable accessibilityRole="button" accessibilityLabel="Clear city filter"
+            onPress={()=>applyCity("")} style={{paddingHorizontal:9}}>
+            <Text style={{fontSize:19,color:T.muted}}>×</Text>
+          </Pressable>:null}
+          <Pressable accessibilityRole="button" accessibilityLabel="Search profiles"
+            onPress={()=>void loadExplore({page:1})}>
             <Text style={{fontSize:15,fontWeight:"700",color:T.accent}}>Go</Text>
           </Pressable>
         </View>
-        {!candidates.length?<View style={{alignItems:"center",paddingTop:80,paddingHorizontal:10}}>
-          <View style={{width:64,height:64,borderRadius:32,backgroundColor:T.light,alignItems:"center",justifyContent:"center",marginBottom:20}}>
-            <Text style={{fontSize:30,color:T.accent}}>♡</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{gap:8,paddingBottom:18}}>
+          {["All cities",...exploreCities.map(c=>c.name)].map((label,i)=>{
+            const selected=i===0?!city.trim():city.trim().toLowerCase()===label.toLowerCase();
+            return <Pressable key={label} accessibilityRole="button"
+              accessibilityLabel={label} onPress={()=>applyCity(i===0?"":label)}
+              style={[st.chip,{paddingHorizontal:14,paddingVertical:8,
+                backgroundColor:selected?T.accent:T.light}]}>
+              <Text style={{fontSize:13,fontWeight:"600",color:selected?T.white:T.ink}}>{label}</Text>
+            </Pressable>;
+          })}
+        </ScrollView>
+        {!account?.visible?<View style={[st.card,{marginBottom:17,backgroundColor:T.soft}]}>
+          <Text style={{fontSize:16,fontWeight:"700",color:T.ink}}>Your profile is private</Text>
+          <Text style={[st.note,{marginTop:5,marginBottom:12}]}>
+            Only profiles that members choose to publish appear in Explore. Share your profile to be found by compatible members.
+          </Text>
+          <Btn en="Publish my profile" roman="Meri profile dikhayein" compact
+            onPress={()=>void togglePublished(true)}/>
+          {account?.member?.phoneVerified===false?<Text style={[st.note,{marginTop:8}]}>
+            Pilot account: your phone number is not yet SMS verified.
+          </Text>:null}
+        </View>:null}
+        <View style={{flexDirection:"row",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+          <View style={{flex:1}}>
+            <Text style={[styles.groupTitle,{marginBottom:2}]}>
+              {exploreSort==="nearest"?"Nearest cities first":"Recommended for you"}
+            </Text>
+            <Text style={st.note}>{exploreTotal} compatible published profile{exploreTotal===1?"":"s"}</Text>
           </View>
-          <Text style={{fontSize:22,fontWeight:"700",color:T.ink,textAlign:"center"}}>No profiles here yet</Text>
-          <Text style={[st.sub,{textAlign:"center"}]}>Abhi yahan koi profile nahi hai.</Text>
-          <Text style={[st.note,{textAlign:"center",marginTop:12}]}>Profiles appear when members choose to share them.</Text>
-        </View>:candidates.map(c=><View key={c.profileId} style={[st.card,{marginBottom:13}]}>
+          {exploreLoading?<ActivityIndicator color={T.accent} size="small"/>:null}
+        </View>
+        {exploreError?<View style={[st.card,{marginBottom:14}]}>
+          <Text style={{color:T.danger}}>{exploreError}</Text>
+          <View style={{marginTop:12}}><Btn compact secondary en="Try again" roman="Dobara dekhein"
+            onPress={()=>void loadExplore({page:1})}/></View>
+        </View>:null}
+        {!exploreLoading&&!exploreError&&candidates.length===0?
+          <View style={{alignItems:"center",paddingTop:46,paddingBottom:58,paddingHorizontal:10}}>
+            <View style={{width:64,height:64,borderRadius:32,backgroundColor:T.light,
+              alignItems:"center",justifyContent:"center",marginBottom:20}}>
+              <Text style={{fontSize:30,color:T.accent}}>♡</Text>
+            </View>
+            <Text style={{fontSize:21,fontWeight:"700",color:T.ink,textAlign:"center"}}>
+              No matching published profiles yet
+            </Text>
+            <Text style={[st.sub,{textAlign:"center"}]}>
+              Try All cities or clear your filters. Private profiles stay hidden until published.
+            </Text>
+          </View>:candidates.map(c=><View key={c.profileId} style={[st.card,{marginBottom:13}]}>
           <View style={{flexDirection:"row",gap:12,alignItems:"center"}}>
-            <View style={styles.avatar}><Text style={{fontSize:23,color:T.accent,fontWeight:"700"}}>{String(c.name||"?").slice(0,1)}</Text></View>
-            <View style={{flex:1}}><Text style={{fontSize:19,fontWeight:"700",color:T.ink}}>{c.name}</Text>
-              <Text style={st.note}>{[c.age?c.age+" years":null,c.city,c.education].filter(Boolean).join(" · ")}</Text></View>
+            <View style={styles.avatar}>
+              <Text style={{fontSize:23,color:T.accent,fontWeight:"700"}}>
+                {String(c.name||"?").slice(0,1)}
+              </Text>
+            </View>
+            <View style={{flex:1}}>
+              <Text style={{fontSize:18,fontWeight:"700",color:T.ink}}>{c.name||"Candidate"}</Text>
+              <Text style={st.note}>
+                {[c.age?c.age+" years":null,c.city,c.education].filter(Boolean).join(" · ")}
+              </Text>
+              <Text style={[st.note,{fontSize:11,marginTop:2}]}>
+                {c.publicId} · {c.verified?"Phone verified":"Phone not verified"}
+              </Text>
+            </View>
           </View>
-          {c.occupation?<Text style={[st.sub,{marginTop:10}]}>{c.occupation}</Text>:null}
-          <View style={{marginTop:15}}><Btn compact en="I'm interested" roman="Dilchaspi hai"
-            onPress={()=>void interest(c.profileId)}/></View>
+          {c.occupation?<Text style={[st.sub,{marginTop:9}]}>{c.occupation}</Text>:null}
+          {c.matchReasons.length?<View style={{flexDirection:"row",flexWrap:"wrap",gap:7,marginTop:11}}>
+            {c.matchReasons.map(reason=><View key={reason} style={st.chip}>
+              <Text style={st.badge}>{reason}</Text>
+            </View>)}
+          </View>:null}
+          {exploreSort==="nearest"&&c.distanceKm!==null?
+            <Text style={[st.note,{marginTop:9}]}>
+              {c.distanceKm===0?"Same city":"Approx. "+c.distanceKm+" km between city centres"}
+            </Text>:null}
+          <View style={{marginTop:15}}>
+            <Btn compact en="I'm interested" roman="Dilchaspi hai"
+              onPress={()=>void interest(c.profileId)}/>
+          </View>
         </View>)}
+        {exploreHasMore&&!exploreError?<Btn en={exploreLoading?"Loading...":"Load more profiles"}
+          roman="Aur rishte dekhein" compact secondary disabled={exploreLoading}
+          onPress={()=>void loadExplore({page:explorePage+1,append:true})}/>:null}
       </ScrollView>
+      <View style={styles.exploreActions}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Filter profiles"
+          onPress={()=>{setFilterDraft({...exploreFilters});setFilterOpen(true);}}
+          style={styles.exploreActionButton}>
+          <Text style={styles.exploreActionText}>☷  Filter{activeFilters?" ("+activeFilters+")":""}</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Sort profiles"
+          onPress={()=>setSortOpen(true)} style={styles.exploreActionButton}>
+          <Text style={styles.exploreActionText}>↕  Sort</Text>
+        </Pressable>
+      </View>
       {footer("explore")}
+      <Modal animationType="slide" transparent visible={filterOpen}
+        onRequestClose={()=>setFilterOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalSheet}>
+            <Text style={[styles.groupTitle,{fontSize:23,marginBottom:3}]}>Filter Rishte</Text>
+            <Text style={[st.note,{marginBottom:18}]}>Find the profiles that fit your preferences</Text>
+            <ScrollView keyboardShouldPersistTaps="handled" style={{flexGrow:0}}
+              contentContainerStyle={{paddingBottom:12}}>
+              <View style={{flexDirection:"row",gap:12}}>
+                <View style={{flex:1}}><Field label="Age from" value={filterDraft.ageMin} numeric
+                  onChangeText={v=>narrow("ageMin",v)} placeholder="18" maxLength={2}/></View>
+                <View style={{flex:1}}><Field label="Age to" value={filterDraft.ageMax} numeric
+                  onChangeText={v=>narrow("ageMax",v)} placeholder="40" maxLength={2}/></View>
+              </View>
+              <View style={{flexDirection:"row",gap:12}}>
+                <View style={{flex:1}}><Field label="Height from (cm)" value={filterDraft.heightMin}
+                  numeric onChangeText={v=>narrow("heightMin",v)} placeholder="150" maxLength={3}/></View>
+                <View style={{flex:1}}><Field label="Height to (cm)" value={filterDraft.heightMax}
+                  numeric onChangeText={v=>narrow("heightMax",v)} placeholder="190" maxLength={3}/></View>
+              </View>
+              <Text style={st.inputLabel}>Marital status</Text>
+              <View style={{flexDirection:"row",flexWrap:"wrap",gap:7,marginBottom:16}}>
+                {["Any",...maritalOptions].map(value=>{
+                  const selected=filterDraft.maritalStatus===(value==="Any"?"":value);
+                  return <Pressable key={value} accessibilityRole="button"
+                    onPress={()=>narrow("maritalStatus",value==="Any"?"":value)}
+                    style={[st.chip,{paddingVertical:9,backgroundColor:selected?T.accent:T.light}]}>
+                    <Text style={{fontSize:13,color:selected?T.white:T.ink}}>{value}</Text>
+                  </Pressable>;
+                })}
+              </View>
+              <Field label="Education contains" value={filterDraft.education}
+                onChangeText={v=>narrow("education",v)} placeholder="e.g. graduate" maxLength={100}/>
+              <Field label="Occupation contains" value={filterDraft.occupation}
+                onChangeText={v=>narrow("occupation",v)} placeholder="e.g. teacher" maxLength={100}/>
+            </ScrollView>
+            <View style={{gap:10,marginTop:5}}>
+              <Btn en="Apply filters" roman="Filter lagayein" compact onPress={applyFilterDraft}/>
+              <View style={{flexDirection:"row",gap:10}}>
+                <View style={{flex:1}}><Btn en="Clear all" roman="Saaf karein" compact secondary
+                  onPress={clearExploreFilters}/></View>
+                <View style={{flex:1}}><Btn en="Cancel" roman="Rehne dein" compact secondary
+                  onPress={()=>setFilterOpen(false)}/></View>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      <Modal animationType="slide" transparent visible={sortOpen}
+        onRequestClose={()=>setSortOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalSheet}>
+            <Text style={[styles.groupTitle,{fontSize:23}]}>Sort Rishte</Text>
+            <Text style={[st.note,{marginBottom:16}]}>Choose how profiles are ordered</Text>
+            {([{id:"relevance",title:"Most relevant",description:"Prioritise reciprocal preferences and nearby cities"},
+              {id:"nearest",title:"Nearest first",description:"Approximate distance between cities, not exact addresses"}
+            ] as {id:ExploreSort;title:string;description:string}[]).map(option=>
+              <Pressable key={option.id} accessibilityRole="radio"
+                accessibilityState={{checked:exploreSort===option.id}}
+                onPress={()=>applyExploreSort(option.id)}
+                style={[st.card,{marginBottom:11,flexDirection:"row",alignItems:"center",gap:12,
+                  borderColor:exploreSort===option.id?T.accent:T.border}]}>
+                <Text style={{fontSize:23,color:T.accent}}>{exploreSort===option.id?"◉":"○"}</Text>
+                <View style={{flex:1}}>
+                  <Text style={{fontSize:16,color:T.ink,fontWeight:"700"}}>{option.title}</Text>
+                  <Text style={st.note}>{option.description}</Text>
+                </View>
+              </Pressable>)}
+            <Btn secondary compact en="Close" roman="Band karein" onPress={()=>setSortOpen(false)}/>
+          </View>
+        </View>
+      </Modal>
     </View>;
   }
   function interestsScreen(){
@@ -671,6 +956,51 @@ function App(){
           {x.status==="PENDING"?<Btn compact secondary en="Withdraw" roman="Wapas lein" onPress={()=>void decide(x.id,"WITHDRAW")}/>:null}
         </View>)}
       </ScrollView>{footer("interests")}
+    </View>;
+  }
+  function matchPreferencesScreen(){
+    return <View style={st.page}>
+      {header("Match preferences",()=>setScreen("profile"),"Rishte ki pasand")}
+      <ScrollView contentContainerStyle={st.inner} keyboardShouldPersistTaps="handled">
+        <H en="Who would you like to meet?" roman="Aapki pasand kya hai?"/>
+        <Text style={[st.note,{marginBottom:20}]}>
+          These preferences help rank matches in both directions. They are optional and never change your original interview answers.
+        </Text>
+        <View style={{flexDirection:"row",gap:12}}>
+          <View style={{flex:1}}>
+            <Field label="Preferred age from" value={prefAgeMin} numeric
+              onChangeText={setPrefAgeMin} placeholder="21" maxLength={2}/>
+          </View>
+          <View style={{flex:1}}>
+            <Field label="Preferred age to" value={prefAgeMax} numeric
+              onChangeText={setPrefAgeMax} placeholder="30" maxLength={2}/>
+          </View>
+        </View>
+        <Field label="Preferred cities" roman="Pasandeeda sheher" value={prefCities}
+          onChangeText={setPrefCities} placeholder="Delhi, Aligarh, Lucknow"/>
+        <Text style={[st.note,{marginTop:-12,marginBottom:17}]}>
+          Separate multiple cities with commas. Delhi and Dilli are treated as the same city.
+        </Text>
+        <Text style={st.inputLabel}>Preferred marital status (optional)</Text>
+        <View style={{flexDirection:"row",flexWrap:"wrap",gap:8,marginBottom:20}}>
+          {["Any",...maritalOptions].map(value=>{
+            const selected=prefMarital===(value==="Any"?"":value);
+            return <Pressable key={value} accessibilityRole="button"
+              onPress={()=>setPrefMarital(value==="Any"?"":value)}
+              style={[st.chip,{paddingVertical:10,backgroundColor:selected?T.accent:T.light}]}>
+              <Text style={{fontSize:13,color:selected?T.white:T.ink}}>{value}</Text>
+            </Pressable>;
+          })}
+        </View>
+        <Field label="Preferred education" value={prefEducation}
+          onChangeText={setPrefEducation} placeholder="e.g. Bachelor's" maxLength={100}/>
+        <Field label="Preferred profession" value={prefOccupation}
+          onChangeText={setPrefOccupation} placeholder="e.g. teacher" maxLength={100}/>
+        <Btn en="Save match preferences" roman="Pasand save karein"
+          onPress={()=>void saveMatchPreferences()}/>
+        <View style={{height:12}}/>
+        <Btn en="Cancel" roman="Wapas" secondary onPress={()=>setScreen("profile")}/>
+      </ScrollView>
     </View>;
   }
   function profileScreen(){
@@ -706,6 +1036,25 @@ function App(){
             <Text style={[st.sub,{color:T.ink,marginTop:2}]}>{formatValue(readAt(profile,x))}</Text>
           </View>)}
         </View>
+        <View style={{height:18}}/>
+        <View style={[st.card,{backgroundColor:account?.visible?T.white:T.soft}]}>
+          <Text style={styles.groupTitle}>Profile visibility</Text>
+          <Text style={[st.sub,{marginTop:2}]}>
+            {account?.visible?"Published: compatible members can discover your profile.":
+              "Private: your profile is hidden from other members."}
+          </Text>
+          <Text style={[st.note,{marginTop:6,marginBottom:13}]}>
+            {account?.member?.phoneVerified?
+              "Phone number verified.":
+              "Pilot account: phone number not yet SMS verified. Publishing is optional."}
+          </Text>
+          <Btn en={account?.visible?"Make profile private":"Publish my profile"}
+            roman={account?.visible?"Profile chhupayein":"Meri profile dikhayein"}
+            compact secondary onPress={()=>void togglePublished(!account?.visible)}/>
+        </View>
+        <View style={{height:12}}/>
+        <Btn en="My Match Preferences" roman="Munasib rishte ki pasand"
+          secondary onPress={openMatchPreferences}/>
         <View style={{height:18}}/>
         <Btn en="Download Bio Data" roman="Biodata JPEG banayein" onPress={()=>void openBiodata("profile")}/>
         <View style={{height:12}}/>
@@ -942,6 +1291,7 @@ function App(){
     if(screen==="explore")return showExplore();
     if(screen==="interests")return interestsScreen();
     if(screen==="profile")return profileScreen();
+    if(screen==="matchPreferences")return matchPreferencesScreen();
     return null;
   }
   return <SafeAreaProvider>
@@ -976,6 +1326,14 @@ const styles=StyleSheet.create({
   exploreHeader:{paddingHorizontal:22,paddingTop:18,paddingBottom:15},
   search:{borderWidth:1,borderColor:T.border,borderRadius:16,paddingHorizontal:15,minHeight:53,
     flexDirection:"row",alignItems:"center",marginBottom:24,backgroundColor:T.white},
+  exploreActions:{flexDirection:"row",gap:10,paddingHorizontal:20,paddingVertical:10,
+    backgroundColor:T.paper,borderTopColor:T.line,borderTopWidth:1},
+  exploreActionButton:{flex:1,borderWidth:1,borderColor:T.border,backgroundColor:T.white,
+    minHeight:46,borderRadius:13,alignItems:"center",justifyContent:"center"},
+  exploreActionText:{color:T.accent,fontSize:15,fontWeight:"700"},
+  modalBackdrop:{flex:1,justifyContent:"flex-end",backgroundColor:"rgba(15,35,22,.43)"},
+  modalSheet:{backgroundColor:T.paper,paddingHorizontal:23,paddingTop:25,paddingBottom:33,
+    borderTopLeftRadius:25,borderTopRightRadius:25,maxHeight:"88%"},
   avatar:{width:55,height:55,borderRadius:28,backgroundColor:T.light,alignItems:"center",justifyContent:"center"},
   empty:{marginVertical:10,paddingVertical:18,paddingHorizontal:18,borderWidth:1,borderColor:T.border,
     borderRadius:18,backgroundColor:T.white},
