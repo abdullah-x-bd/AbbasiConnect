@@ -138,8 +138,10 @@ export function exploreCandidates(viewer:any,records:DiscoverRecord[],input:Disc
     const alignment=active?Math.round(65*(a.matched+b.matched)/active):0;
     const proximity=sameCity?25:dist!==null&&dist<=150?12:dist!==null&&dist<=400?5:0;
     const relevance=alignment+proximity+(row.account?.phoneVerified?2:0);
-    const reasons=[...new Set([...a.reasons,...(b.matched>0?["Reciprocal preferences"]:[]),
-      ...(sameCity?["Same city"]:dist!==null&&dist<=150?["Nearby city"]:[])])].slice(0,3);
+    const reasons=[...new Set([
+      ...(sameCity?["Same city"]:dist!==null&&dist<=150?["Nearby city"]:[]),
+      ...a.reasons,...(b.matched>0?["Reciprocal preferences"]:[])
+    ])].slice(0,3);
     return {
       profileId:row.id,publicId:"ABC-"+row.id.replace(/-/g,"").slice(0,8).toUpperCase(),
       hasPhoto:Boolean(c.profile_photo?.uploaded),verified:Boolean(row.account?.phoneVerified),
