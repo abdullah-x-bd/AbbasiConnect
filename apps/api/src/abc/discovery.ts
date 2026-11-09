@@ -94,7 +94,7 @@ function fitsPreference(preferences:any,other:any){
   const matched=tests.reduce((n,t)=>n+(t.match?t.weight:0),0);
   return {total,matched,reasons:tests.filter(t=>t.match).map(t=>t.reason)};
 }
-function mutualSeeks(viewer:any,target:any):boolean{
+export function mutualSeeks(viewer:any,target:any):boolean{
   const viewerSeeks=viewer?.registration?.looking_for;
   const targetSeeks=target?.registration?.looking_for;
   if(viewerSeeks!=="bride"&&viewerSeeks!=="groom")return false;
