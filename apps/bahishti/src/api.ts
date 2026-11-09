@@ -14,8 +14,21 @@ export type Session={id:string;phase:Phase;profile:Profile;fieldStates:Record<st
   messages:ChatMessage[];currentQuestion:string|null;currentQuestionText?:string|null;currentQuestionTargets?:string[];
   progress:number;missingRequired:string[];version:number;
   reviewConfirmed:boolean;phone:string|null;visible:boolean};
-export type Account={member:{id:string;phone:string};profile:Profile;visible:boolean;phase:Phase};
-export type Candidate={profileId:string;name:string;age:number;gender:string;city:string;height_cm:number;education:string;occupation:string;introduction:string;looking_for:string};
+export type Account={member:{id:string;phone:string;phoneVerified:boolean};profile:Profile;visible:boolean;phase:Phase};
+export type Candidate={
+  profileId:string;publicId:string;name:string;age:number|null;gender:string;city:string;
+  height_cm:number|null;education:string;occupation:string;introduction:string;
+  looking_for:"bride"|"groom";maritalStatus:string;verified:boolean;
+  distanceKm:number|null;matchReasons:string[];hasPhoto:boolean;
+};
+export type DiscoverResponse={
+  candidates:Candidate[];total:number;page:number;limit:number;hasMore:boolean;
+  cities:{name:string;count:number}[];sort:"relevance"|"nearest";
+};
+export type MatchPreferences={
+  ageMin:number|null;ageMax:number|null;cities:string[];maritalStatus:string|null;
+  education:string;occupation:string;
+};
 
 export function getBearer(){return bearer;}
 export async function restoreTokens(){
