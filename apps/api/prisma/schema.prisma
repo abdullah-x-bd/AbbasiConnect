@@ -380,6 +380,7 @@ model AbcRegistration {
   updatedAt      DateTime @updatedAt
   account        AbcAccount?
   challenges     AbcSmsChallenge[]
+  voiceEvents    AbcVoiceEvent[]
 
   @@index([phase, updatedAt])
 }
@@ -425,4 +426,26 @@ model AbcInterest {
   to            AbcAccount @relation("abcTo",fields:[toId],references:[id],onDelete:Cascade)
   @@unique([fromId,toId])
   @@index([toId,status,createdAt])
+}
+
+// Private, short-lived diagnostics for a single ABC Voice Call.
+// Contains no user microphone audio or recognized user-answer text.
+model AbcVoiceEvent {
+  id             String   @id @default(uuid())
+  registrationId String
+  callId         String   @db.VarChar(100)
+  sequence       Int
+  elapsedMs      Int
+  eventType      String   @db.VarChar(48)
+  phase          String   @db.VarChar(24)
+  questionSequence Int
+  questionPath   String?  @db.VarChar(150)
+  preview        String?  @db.VarChar(180)
+  detail         String?  @db.VarChar(80)
+  createdAt      DateTime @default(now())
+  registration   AbcRegistration @relation(fields:[registrationId],references:[id],onDelete:Cascade)
+
+  @@unique([registrationId,callId,sequence])
+  @@index([registrationId,createdAt])
+  @@index([callId,createdAt])
 }
