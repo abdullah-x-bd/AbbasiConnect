@@ -4,7 +4,7 @@
  */
 import { prisma } from "../db.js";
 
-const tables=["AbcRegistration","AbcAccount","AbcSmsChallenge","AbcInterest",
+const tables=["AbcRegistration","AbcAccount","AbcSmsChallenge","AbcInterest","AbcVoiceEvent",
   "User","OtpChallenge","FamilyLink","FamilyTreeAccess","RishteProfile","MatchInterest",
   "Shortlist","Post","PostLike","PostComment","DirectThread","Message","Block","Report"];
 try{

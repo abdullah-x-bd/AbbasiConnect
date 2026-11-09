@@ -10,6 +10,7 @@ import {
 } from "./fields.js";
 import { extract,interview,openRouterConfigured,transcribeAudio,cleanProfileValue } from "./llm.js";
 import { renderBiodataJpeg,BIODATA_WIDTH,BIODATA_HEIGHT } from "./biodata.js";
+import {voiceTelemetryBatchSchema,safeAssistantPreview,safeVoiceDetail,VOICE_EVENT_RETENTION_DAYS} from "./voice-telemetry.js";
 import {
   VOICE_MAX_DURATION_MS,VOICE_STARTED_KEY,VOICE_ALLOWED_OFF_TOPIC,
   unrelatedCount,countVoiceReply,voiceCallExpired,isVoiceRepeatRequest,isVoiceAlreadyProvided,
@@ -79,6 +80,7 @@ function perKeyThrottle(){
   };
 }
 const throttle=perKeyThrottle();
+let lastVoiceEventCleanupAt=0;
 
 export async function registerAbcRoutes(app:FastifyInstance){
   async function requireDraft(request:FastifyRequest):Promise<Draft|null>{
@@ -136,7 +138,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
     ok:true,service:"abbasi-bahishti-connections",aiConfigured:openRouterConfigured(),
     smsConfigured:Boolean(process.env.ABC_SMS_NUMBER&&process.env.ABC_SMS_WEBHOOK_SECRET),
     model:process.env.ABC_OPENROUTER_MODEL||"google/gemini-3.1-flash-lite",
-    voiceContract:"canonical-question-v2.2"
+    voiceContract:"canonical-question-v2.2",voiceTelemetryContract:"supabase-audit-v1"
   }));
 
   // An early, rate-limited duplicate-number check, before verification or PIN.
@@ -312,6 +314,67 @@ export async function registerAbcRoutes(app:FastifyInstance){
     return {session:client(updated),action:"end",reason:"silence"};
   });
 
+  // Durable, private event timeline for diagnosing GPT-Live speech/playback
+  // races. This is separate from profile writes and NEVER changes interview
+  // question state or version. Records no user's spoken words or raw audio.
+  app.post("/live/events",async(request,reply)=>{
+    const d=await requireDraft(request);if(!d)return authError(reply);
+    const parsed=voiceTelemetryBatchSchema.safeParse(request.body);
+    if(!parsed.success)return reply.code(400).send({error:"Invalid voice diagnostic events"});
+    if(!throttle("abc-voice-events:"+d.id,70,60*1000))
+      return reply.code(429).send({error:"Voice diagnostic event rate exceeded"});
+    const {callId,events}=parsed.data;
+    const data=events.map(e=>({
+      registrationId:d.id,callId,sequence:e.sequence,elapsedMs:e.elapsedMs,
+      eventType:e.eventType,phase:e.phase,questionSequence:e.questionSequence,
+      questionPath:e.questionPath??null,
+      preview:safeAssistantPreview(e.eventType,e.preview),
+      detail:safeVoiceDetail(e.detail)
+    }));
+    try{
+      const result=await prisma.abcVoiceEvent.createMany({data,skipDuplicates:true});
+      // Important events also appear in short-lived Render logs, so a
+      // developer can inspect a bug without obtaining a person's auth token.
+      for(const e of data)if([
+        "question_issued","output_started","output_unexpected",
+        "stray_before_question","question_played","voice_error"
+      ].includes(e.eventType)){
+        request.log.info({type:"ABC_VOICE_EVENT",callId,seq:e.sequence,
+          eventType:e.eventType,phase:e.phase,questionSequence:e.questionSequence,
+          questionPath:e.questionPath,preview:e.preview,detail:e.detail},
+        "ABC voice event recorded");
+      }
+      // Simple 14-day retention without a second paid scheduler.
+      const now=Date.now();
+      if(now-lastVoiceEventCleanupAt>24*60*60*1000){
+        lastVoiceEventCleanupAt=now;
+        void prisma.abcVoiceEvent.deleteMany({where:{
+          createdAt:{lt:new Date(now-VOICE_EVENT_RETENTION_DAYS*86_400_000)}
+        }}).catch(error=>request.log.warn({reason:String(error).slice(0,120)},
+          "ABC voice event retention cleanup failed"));
+      }
+      return {stored:result.count,received:events.length};
+    }catch(error){
+      request.log.warn({reason:String(error).slice(0,160)},"ABC voice telemetry write failed");
+      return reply.code(503).send({error:"Voice diagnostic storage unavailable"});
+    }
+  });
+  app.get("/live/events",async(request,reply)=>{
+    const d=await requireDraft(request);if(!d)return authError(reply);
+    const query=z.object({
+      callId:z.string().regex(/^abc_[A-Za-z0-9_-]{8,90}$/).optional(),
+      limit:z.coerce.number().int().min(1).max(250).default(100)
+    }).safeParse(request.query);
+    if(!query.success)return reply.code(400).send({error:"Invalid diagnostic query"});
+    const rows=await prisma.abcVoiceEvent.findMany({
+      where:{registrationId:d.id,...(query.data.callId?{callId:query.data.callId}:{})},
+      orderBy:[{createdAt:"desc"},{sequence:"desc"}],
+      take:query.data.limit,
+      select:{callId:true,sequence:true,elapsedMs:true,eventType:true,phase:true,
+        questionSequence:true,questionPath:true,preview:true,detail:true,createdAt:true}
+    });
+    return {retentionDays:VOICE_EVENT_RETENTION_DAYS,events:rows.reverse()};
+  });
   app.post("/choice",async(request,reply)=>{
     const d=await requireDraft(request);if(!d)return authError(reply);
     if(d.phase!=="COLLECTING")return reply.code(409).send({error:"The interview is not collecting answers"});

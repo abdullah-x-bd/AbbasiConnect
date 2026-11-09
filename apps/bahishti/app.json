@@ -3,12 +3,12 @@
     "name": "ABC Bahishti Connections",
     "slug": "abc-bahishti",
     "scheme": "abcbahishti",
-    "version": "1.8.1",
+    "version": "1.8.2",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "android": {
       "package": "org.abbasiconnect.bahishti",
-      "versionCode": 181,
+      "versionCode": 182,
       "permissions": [
         "RECORD_AUDIO"
       ],
