@@ -451,7 +451,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
       // Terminology used in the current question is a legitimate clarification.
       // Do not invoke the extractor, increment the unrelated count, or advance
       // the questionnaire. Voice receives exactly one approved explanation.
-      const declines={...d.declines,[VOICE_WAIT_STARTED_KEY]:0,[VOICE_NO_ANSWER_KEY]:0};
+      const declines:Record<string,number>={...d.declines,[VOICE_WAIT_STARTED_KEY]:0,[VOICE_NO_ANSWER_KEY]:0};
       if(turnKey)declines[turnKey]=1;
       const saved=await store(d,{declines,messages:safeHistory([...d.messages,
         note("user",userText,target),note("assistant",shortMessage(glossaryReply),target)])});
