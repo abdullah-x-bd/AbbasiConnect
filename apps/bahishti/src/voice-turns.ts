@@ -6,6 +6,15 @@
 export type TranscriptDelta={event_id?:string;delta:string;start_ms?:number;end_ms?:number};
 export type VoiceTranscript={text:string;startMs:number;endMs:number;fragments:number};
 
+// GPT-Live can speak autonomously while the backend validates the previous
+// answer. Wait for its unprompted transcript to become quiet before admitting
+// a new authorized question into the audio path.
+export const STRAY_SPEECH_QUIET_MS=1800;
+export const STRAY_SPEECH_MAX_DRAIN_MS=5500;
+export function shouldDrainStraySpeech(lastUnpromptedTranscriptAt:number,now:number):boolean{
+  return lastUnpromptedTranscriptAt>0&&
+    now-lastUnpromptedTranscriptAt<STRAY_SPEECH_QUIET_MS;
+}
 const QUIET_AFTER_VOICE_MS=2100;
 const TRANSCRIPT_SETTLE_MS=1100;
 const TRANSCRIPT_ONLY_QUIET_MS=3300;
