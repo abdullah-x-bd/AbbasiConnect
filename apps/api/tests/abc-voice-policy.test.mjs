@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   VOICE_MAX_DURATION_MS,VOICE_SILENCE_WARNING_MS,VOICE_SILENCE_END_MS,
   VOICE_ALLOWED_OFF_TOPIC,VOICE_STARTED_KEY,VOICE_UNRELATED_KEY,
-  isVoiceDistraction,isVoiceRepeatRequest,isVoiceAlreadyProvided,unrelatedCount,countVoiceReply,voiceCallExpired,
+  isVoiceDistraction,isVoiceRepeatRequest,isVoiceAlreadyProvided,voiceQuestionClarification,unrelatedCount,countVoiceReply,voiceCallExpired,
   voiceNoAnswerDecision,VOICE_WAIT_FOR_SPEECH_MS,VOICE_WAIT_STARTED_KEY,VOICE_NO_ANSWER_KEY
 } from "../src/abc/voice-policy.ts";
 
@@ -83,4 +83,23 @@ test("already-answered complaints are recovery requests, not repetitions",()=>{
   for(const utterance of ["Repeat that","I am a teacher","What is the next question?"]){
     assert.equal(isVoiceAlreadyProvided(utterance),false,utterance);
   }
+});
+
+test("ancestral-city terminology questions are on-topic in Hindi and Roman",()=>{
+  const current="candidate.current_location.city";
+  const queries=[
+    "आबाई शहेर का क्या मतलब होता है",
+    "हाँ, लेकिन आबाई शहर का मतलब क्या होता है",
+    "aabai shehar ka kya matlab hai?",
+    "What does ancestral city mean?",
+    "What does Abhay Shehar mean?"
+  ];
+  for(const question of queries){
+    const response=voiceQuestionClarification(question,current,"roman");
+    assert.match(response||"",/khandaan/i,question);
+    assert.match(response||"",/Batayein/i,question);
+  }
+  assert.equal(voiceQuestionClarification("Tell me a joke",current,"roman"),null);
+  assert.equal(voiceQuestionClarification("What does ancestral city mean?","family.mother.name","roman"),null);
+  assert.match(voiceQuestionClarification("आबाई शहर का क्या मतलब है",current,"hi")||"",/परिवार/);
 });

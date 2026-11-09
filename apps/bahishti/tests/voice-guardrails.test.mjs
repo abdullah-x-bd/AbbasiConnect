@@ -43,3 +43,13 @@ test("text chat still offers microphone but never reads chat bubbles aloud",()=>
   assert.match(app,/Switch to Chat/);
   assert.match(policy,/isVoiceRepeatRequest/);
 });
+
+test("unsolicited GPT-Live speech is drained before authorized question is unmuted",()=>{
+  assert.match(voice,/await drainUnpromptedOutput\(\)/);
+  assert.match(voice,/shouldDrainStraySpeech/);
+  assert.match(voice,/sayQuestion\(question,id\);/);
+  assert.match(voice,/authorized_question_window/);
+  assert.doesNotMatch(voice,/Please stay with the profile questions/);
+  assert.match(backend,/voiceQuestionClarification/);
+  assert.match(backend,/&&\!isVoice/);
+});

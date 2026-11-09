@@ -8,7 +8,8 @@ export const VOICE_EVENT_RETENTION_DAYS=14;
 export const VOICE_EVENT_KINDS=[
   "call_connected","session_started","question_issued",
   "audio_enabled","audio_disabled","output_started","output_snapshot",
-  "output_unexpected","stray_before_question","question_played",
+  "output_unexpected","stray_before_question","output_drain_started",
+  "output_drain_finished","question_played",
   "user_speech_started","turn_finalized","answer_sent","answer_saved",
   "answer_failed","delegation_created","timeout","voice_error","call_ended"
 ] as const;

@@ -1,4 +1,4 @@
-name: Publish ABC v1.8.2 direct APK
+name: Publish ABC v1.8.3 direct APK
 
 on:
   workflow_run:
@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 25
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: abc-bahishti-v1.8.2
+      TAG: abc-bahishti-v1.8.3
     steps:
       - uses: actions/checkout@v4
       - name: Download APK from this exact successful Android build
@@ -34,15 +34,15 @@ jobs:
           test -n "$RUN_ID"
           gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name ABC-Bahishti-Android-APK --dir abc-apk
           test -s abc-apk/app-release.apk
-          cp abc-apk/app-release.apk ABC-Bahishti-Connections-v1.8.2.apk
-          file ABC-Bahishti-Connections-v1.8.2.apk
-          ls -lh ABC-Bahishti-Connections-v1.8.2.apk
+          cp abc-apk/app-release.apk ABC-Bahishti-Connections-v1.8.3.apk
+          file ABC-Bahishti-Connections-v1.8.3.apk
+          ls -lh ABC-Bahishti-Connections-v1.8.3.apk
       - name: Publish direct-install APK
         run: |
           set -euo pipefail
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" ABC-Bahishti-Connections-v1.8.2.apk --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$TAG" ABC-Bahishti-Connections-v1.8.3.apk --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$TAG" ABC-Bahishti-Connections-v1.8.2.apk --repo "$GITHUB_REPOSITORY" --target main --title "ABC Bahishti Connections v1.8.2" --notes "ABC v1.8.2: adds private 14-day Supabase voice event telemetry, output/transcript timing and question playback diagnostics. Does not upload microphone audio or user-answer transcripts. Retains ABC v1.8.1 voice flow fixes." --latest=false
+            gh release create "$TAG" ABC-Bahishti-Connections-v1.8.3.apk --repo "$GITHUB_REPOSITORY" --target main --title "ABC Bahishti Connections v1.8.3" --notes "ABC v1.8.3: adds private 14-day Supabase voice event telemetry, output/transcript timing and question playback diagnostics. Does not upload microphone audio or user-answer transcripts. Retains ABC v1.8.1 voice flow fixes." --latest=false
           fi
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets
