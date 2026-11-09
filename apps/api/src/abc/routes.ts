@@ -335,7 +335,9 @@ export async function registerAbcRoutes(app:FastifyInstance){
       const result=await prisma.abcVoiceEvent.createMany({data,skipDuplicates:true});
       // Important events also appear in short-lived Render logs, so a
       // developer can inspect a bug without obtaining a person's auth token.
-      for(const e of data)if([
+      // Do not duplicate Render log lines when the handset retries an
+      // already persisted batch after a lost HTTP acknowledgement.
+      if(result.count===events.length)for(const e of data)if([
         "question_issued","output_started","output_unexpected",
         "stray_before_question","question_played","voice_error"
       ].includes(e.eventType)){
