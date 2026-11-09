@@ -118,15 +118,17 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     if(auditWritingRef.current||auditEventsRef.current.length===0)return;
     auditWritingRef.current=true;
     const batch=auditEventsRef.current.splice(0,25);
+    let succeeded=false;
     try{
       await api("/abc/live/events",{method:"POST",timeoutMs:6500,
         body:{callId:callNonceRef.current,events:batch}});
+      succeeded=true;
     }catch{
       // Keep original sequence IDs so retries are idempotent on the server.
       auditEventsRef.current=[...batch,...auditEventsRef.current].slice(-100);
     }finally{
       auditWritingRef.current=false;
-      if(auditEventsRef.current.length>=25&&activeRef.current)
+      if(succeeded&&auditEventsRef.current.length>=25&&activeRef.current)
         void flushVoiceEvents();
     }
   }
