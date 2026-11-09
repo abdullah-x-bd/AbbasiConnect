@@ -10,6 +10,7 @@ import {
 } from "./fields.js";
 import { extract,interview,openRouterConfigured,transcribeAudio,cleanProfileValue } from "./llm.js";
 import { renderBiodataJpeg,BIODATA_WIDTH,BIODATA_HEIGHT } from "./biodata.js";
+import {exploreCandidates,normalizeCity,mutualSeeks} from "./discovery.js";
 import {voiceTelemetryBatchSchema,safeAssistantPreview,safeVoiceDetail,VOICE_EVENT_RETENTION_DAYS} from "./voice-telemetry.js";
 import {
   VOICE_MAX_DURATION_MS,VOICE_STARTED_KEY,VOICE_ALLOWED_OFF_TOPIC,
@@ -138,7 +139,8 @@ export async function registerAbcRoutes(app:FastifyInstance){
     ok:true,service:"abbasi-bahishti-connections",aiConfigured:openRouterConfigured(),
     smsConfigured:Boolean(process.env.ABC_SMS_NUMBER&&process.env.ABC_SMS_WEBHOOK_SECRET),
     model:process.env.ABC_OPENROUTER_MODEL||"google/gemini-3.1-flash-lite",
-    voiceContract:"canonical-question-v2.3",voiceTelemetryContract:"supabase-audit-v1"
+    voiceContract:"canonical-question-v2.3",voiceTelemetryContract:"supabase-audit-v1",
+    discoveryContract:"reciprocal-ranking-v1"
   }));
 
   // An early, rate-limited duplicate-number check, before verification or PIN.
@@ -789,36 +791,87 @@ export async function registerAbcRoutes(app:FastifyInstance){
     if(!body.success)return reply.code(400).send({error:"Choose visibility"});
     const reg=acc.registration;
     if(body.data.visible&&reg.phase!=="COMPLETE")return reply.code(409).send({error:"Finish the interview first"});
-    if(body.data.visible&&(!acc.phoneVerified))return reply.code(403).send({error:"SMS verification must be enabled before making your profile public"});
+    // Pilot allows explicit opt-in sharing without verified SMS, but never
+    // labels such an account verified. Set ABC_REQUIRE_SMS_TO_PUBLISH=1 when
+    // an actual receiving gateway is available for production verification.
+    if(body.data.visible&&!acc.phoneVerified&&process.env.ABC_REQUIRE_SMS_TO_PUBLISH==="1")
+      return reply.code(403).send({error:"Please verify your mobile number before publishing"});
     if(body.data.visible&&!((reg.profile as any)?.registration?.candidate_consent_confirmed))return reply.code(403).send({error:"Candidate consent is required before publishing"});
     await prisma.abcRegistration.update({where:{id:reg.id},data:{visible:body.data.visible}});
     return {visible:body.data.visible};
   });
+  // Save match preferences without changing the structured interview or its
+  // completed field states. These settings can be revised at any time.
+  app.post("/match-preferences",async(request,reply)=>{
+    const acc=await requireAccount(request);if(!acc)return reply.code(401).send({error:"ABC login required"});
+    if(acc.registration.phase!=="COMPLETE")return reply.code(409).send({error:"Complete your profile before saving match preferences"});
+    const parsed=z.object({
+      ageMin:z.number().int().min(18).max(95).nullable(),
+      ageMax:z.number().int().min(18).max(95).nullable(),
+      cities:z.array(z.string().trim().min(2).max(70)).max(10),
+      maritalStatus:z.enum(["never married","divorced","widowed","separated","annulled","other"]).nullable(),
+      education:z.string().trim().max(100),
+      occupation:z.string().trim().max(100)
+    }).strict().safeParse(request.body);
+    if(!parsed.success)return reply.code(400).send({error:"Check the match preference fields"});
+    const v=parsed.data;
+    if((v.ageMin===null)!==(v.ageMax===null)||v.ageMin!==null&&v.ageMax!==null&&v.ageMin>v.ageMax)
+      return reply.code(400).send({error:"Enter both minimum and maximum ages in the correct order"});
+    const profile=structuredClone(acc.registration.profile as any);
+    profile.partner_preferences={
+      ...(profile.partner_preferences||{}),
+      preferred_age_range:v.ageMin!==null&&v.ageMax!==null?`${v.ageMin}-${v.ageMax}`:null,
+      preferred_cities_or_regions:[...new Set(v.cities.map(normalizeCity))].filter(Boolean),
+      marital_status_preference:v.maritalStatus,
+      education_preference:v.education||null,
+      profession_preference:v.occupation||null
+    };
+    try{
+      const saved=await store(readDraft(acc.registration),{profile});
+      return {preferences:saved.profile.partner_preferences,session:client(saved)};
+    }catch(e){return reply.code(409).send({error:e instanceof Error?e.message:"Profile changed; please retry"});}
+  });
+  // Filters and sorting occur after eligibility, without cutting the newest
+  // 70 records first. An unpublished or nonconsenting account is never returned.
   app.get("/discover",async(request,reply)=>{
     const acc=await requireAccount(request);if(!acc)return reply.code(401).send({error:"ABC login required"});
-    const q=z.object({city:z.string().max(60).optional(),seeking:z.enum(["bride","groom"]).optional()}).safeParse(request.query);
-    if(!q.success)return reply.code(400).send({error:"Invalid filter"});
-    const records=await prisma.abcRegistration.findMany({where:{phase:"COMPLETE",visible:true,
-      account:{isNot:{id:acc.id}}},orderBy:{updatedAt:"desc"},take:70});
-    const candidates=records.filter(x=>{
-      const p=x.profile as any;
-      return (!q.data.city||String(p?.candidate?.current_location?.city||"").toLowerCase().includes(q.data.city.toLowerCase()))
-      &&(!q.data.seeking||p?.registration?.looking_for===q.data.seeking);
-    }).map(x=>{
-      const p=x.profile as any,c=p.candidate;
-      return {profileId:x.id,hasPhoto:Boolean(x.photoData),name:c?.full_name,age:c?.age_years,
-        gender:c?.gender,city:c?.current_location?.city,height_cm:c?.height_cm,
-        education:c?.education?.highest_qualification,occupation:c?.occupation?.profession_or_role,
-        introduction:c?.personal_introduction,looking_for:p.registration?.looking_for};
+    const number=(min:number,max:number)=>z.coerce.number().int().min(min).max(max).optional();
+    const q=z.object({
+      city:z.string().trim().max(60).optional(),
+      seeking:z.enum(["bride","groom"]).optional(),
+      sort:z.enum(["relevance","nearest"]).default("relevance"),
+      page:number(1,100000).default(1),limit:number(1,50).default(20),
+      ageMin:number(18,95),ageMax:number(18,95),
+      heightMin:number(100,230),heightMax:number(100,230),
+      maritalStatus:z.enum(["never married","divorced","widowed","separated","annulled","other"]).optional(),
+      education:z.string().trim().max(100).optional(),
+      occupation:z.string().trim().max(100).optional()
+    }).strict().safeParse(request.query);
+    if(!q.success)return reply.code(400).send({error:"Invalid Explore filter"});
+    const filters=q.data;
+    if(filters.ageMin!==undefined&&filters.ageMax!==undefined&&filters.ageMin>filters.ageMax)
+      return reply.code(400).send({error:"Minimum age must not exceed maximum age"});
+    if(filters.heightMin!==undefined&&filters.heightMax!==undefined&&filters.heightMin>filters.heightMax)
+      return reply.code(400).send({error:"Minimum height must not exceed maximum height"});
+    const viewer=acc.registration.profile as any;
+    if(filters.seeking&&viewer?.registration?.looking_for!==filters.seeking)
+      return reply.code(400).send({error:"Explore only shows reciprocal matrimonial partners"});
+    const records=await prisma.abcRegistration.findMany({
+      where:{phase:"COMPLETE",visible:true,account:{isNot:{id:acc.id}}},
+      select:{id:true,phase:true,visible:true,profile:true,updatedAt:true,
+        account:{select:{id:true,phoneVerified:true}}}
     });
-    return {candidates};
+    return exploreCandidates(viewer,records,filters);
   });
   app.post("/interests/:registrationId",async(request,reply)=>{
     const acc=await requireAccount(request);if(!acc)return reply.code(401).send({error:"ABC login required"});
     const id=(request.params as any)?.registrationId;
     if(typeof id!=="string"||!/^[0-9a-f-]{36}$/i.test(id))return reply.code(400).send({error:"Invalid candidate"});
     const target=await prisma.abcAccount.findUnique({where:{registrationId:id},include:{registration:true}});
-    if(!target||!target.registration.visible||target.id===acc.id)return reply.code(404).send({error:"Candidate unavailable"});
+    if(!target||!target.registration.visible||target.registration.phase!=="COMPLETE"||
+      !(target.registration.profile as any)?.registration?.candidate_consent_confirmed||
+      !mutualSeeks(acc.registration.profile,target.registration.profile)||target.id===acc.id)
+      return reply.code(404).send({error:"Candidate unavailable"});
     const body=z.object({note:z.string().max(400).default("")}).safeParse(request.body??{});
     if(!body.success)return reply.code(400).send({error:"Interest note too long"});
     const interest=await prisma.abcInterest.upsert({where:{fromId_toId:{fromId:acc.id,toId:target.id}},
