@@ -227,10 +227,11 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     }
   }
 
-  async function markQuestionPlayed(sequence:number){
+  async function markQuestionPlayed(sequence:number,reason="unknown"){
     if(!activeRef.current||phaseRef.current!=="asking"||waitLockRef.current)return;
     if(sequence!==questionSeqRef.current)return;
     waitLockRef.current=true;
+    audit("question_played",reason,outputSpeechRef.current);
     // Never start the countdown until after question playback ends.
     try{
       const d=await api<{session:Session;action:string}>("/abc/live/wait",{
@@ -241,7 +242,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
       sessionRef.current=d.session;
       onSessionRef.current(d.session);
       if(phaseRef.current==="asking"){
-        audioAllowed(false);
+        audioAllowed(false,"question_played");
         setPhase("waiting");
         waitingAtRef.current=Date.now();
         setWaitSeconds(15);
@@ -261,6 +262,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     if(timeoutLockRef.current||!activeRef.current||phaseRef.current!=="waiting")return;
     if(waitingAtRef.current===0)return;
     timeoutLockRef.current=true;
+    audit("timeout","start_to_speak");
     try{
       const res=await api<{session:Session;action:"wait"|"repeat"|"end";question?:string}>("/abc/live/wait",{
         method:"POST",body:{action:"timeout",version:sessionRef.current.version,
@@ -288,6 +290,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     for(let i=0;i<40&&waitLockRef.current&&activeRef.current;i++)await sleep(80);
     if(!activeRef.current)return;
     const started=Date.now();
+    audit("answer_sent","validated_turn");
     let version=sessionRef.current.version;
     for(let attempt=0;attempt<3;attempt++){
       try{
@@ -304,6 +307,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
         setUnrelatedCount(strikes);
         const elapsed=Date.now()-started;
         console.info("ABC_VOICE_TIMING",{stage:"backend_validated",ms:elapsed,turn:turnId.slice(-5)});
+        audit("answer_saved","accepted_"+String((res as any).changesAccepted??"unknown"));
         if(res.voiceTermination==="off_topic_limit"||
            res.session.profile.registration?.onboarding_mode!=="voice"||
            res.session.phase!=="COLLECTING"){
@@ -339,6 +343,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
           version=latest.session.version;
         }catch{}
         if(attempt<2){await sleep(550);continue;}
+        audit("answer_failed","retries_exhausted");
         setError("Your answer could not be confirmed. Please try speaking again. "+message);
         // Never replay historical dialogue after an HTTP failure.
         audioAllowed(false);
@@ -369,6 +374,8 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     delegatedIdsRef.current=delegatedIdsRef.current.filter(x=>x.offset>complete.endMs+2500);
     if(delegationId)silentContext("",delegationId);
     lastTurnFinalizedAtRef.current=Date.now();
+    audit("turn_finalized","fragments_"+String(complete.fragments));
+    unexpectedAudioLoggedRef.current=false;
     console.info("ABC_VOICE_TIMING",{stage:"turn_finalized",fragments:complete.fragments,
       utteranceAudioMs:complete.endMs-complete.startMs});
     try{
@@ -420,7 +427,11 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
                    phaseRef.current==="processing"){
             // Out-of-turn voice is not played. The model may still generate it,
             // but it cannot talk over our interviewee through the remote track.
-            audioAllowed(false);
+            if(!unexpectedAudioLoggedRef.current){
+              unexpectedAudioLoggedRef.current=true;
+              audit("output_unexpected","rtp_audio_out_of_turn");
+            }
+            audioAllowed(false,"out_of_turn_audio");
           }
         }
       }
@@ -435,6 +446,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
     let msg:Event;
     try{msg=JSON.parse(raw);}catch{return;}
     if(msg.type==="session.started"){
+      audit("session_started","provider_session_started");
       openaiReadyRef.current=true;
       setStatus("connected");
       if(!greetingSentRef.current&&channelRef.current?.readyState==="open"){
@@ -445,13 +457,30 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
       return;
     }
     if(msg.type==="session.output_transcript.delta"&&typeof msg.delta==="string"){
+      const now=Date.now();
       if(phaseRef.current!=="asking"){
-        audioAllowed(false);
+        // These are the exact unsolicited phrases we previously could not see
+        // on Render. Preserve only ASSISTANT output, never user transcripts.
+        straySpeechRef.current=clip(straySpeechRef.current+msg.delta);
+        if(now-straySnapshotLastRef.current>=700){
+          audit("output_unexpected","transcript_out_of_turn",straySpeechRef.current);
+          straySnapshotLastRef.current=now;
+        }
+        audioAllowed(false,"out_of_turn_transcript");
         return;
+      }
+      const isFirst=outputSpeechRef.current.length===0;
+      outputSpeechRef.current=clip(outputSpeechRef.current+msg.delta);
+      if(isFirst){
+        audit("output_started","provider_transcript",outputSpeechRef.current);
+        outputSnapshotLastRef.current=now;
+      }else if(now-outputSnapshotLastRef.current>=900){
+        audit("output_snapshot","provider_transcript",outputSpeechRef.current);
+        outputSnapshotLastRef.current=now;
       }
       questionOutputRef.current=true;
       seenOutputRef.current=true;
-      outputTextLastAtRef.current=Date.now();
+      outputTextLastAtRef.current=now;
       setAssistantCaption(old=>clip(old+msg.delta!));
       return;
     }
@@ -470,6 +499,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
       return;
     }
     if(msg.type==="session.delegation.created"&&msg.delegation?.target==="client"){
+      audit("delegation_created","backend_client");
       const id=msg.delegation.id;
       if(delegationSeenRef.current.has(id))return;
       delegationSeenRef.current.add(id);
@@ -482,6 +512,7 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
       return;
     }
     if(msg.type==="error"){
+      audit("voice_error","provider_error");
       setError(msg.error?.message||"The voice provider reported an error.");
       return;
     }
@@ -504,7 +535,8 @@ export default function VoiceCall({session,preview=false,onSession,onSwitchToCha
         outputTextLastAtRef.current>0&&now-outputTextLastAtRef.current>=1900;
       const noPlaybackFallback=now-questionIssuedRef.current>=7000&&!seenOutputRef.current;
       if(voiceFinished||transcriptFinished||noPlaybackFallback)
-        void markQuestionPlayed(questionSeqRef.current);
+        void markQuestionPlayed(questionSeqRef.current,
+          voiceFinished?"rtp_quiet":transcriptFinished?"transcript_quiet":"no_playback");
     }else if(p==="waiting"){
       if(waitingAtRef.current){
         const timeLeft=Math.max(0,Math.ceil((START_SPEAK_MS-(now-waitingAtRef.current))/1000));
