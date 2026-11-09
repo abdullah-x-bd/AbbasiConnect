@@ -34,14 +34,14 @@ export async function clearTokens(){
   bearer=null;
   await Promise.all([SecureStore.deleteItemAsync(MEMBER_KEY),SecureStore.deleteItemAsync(DRAFT_KEY)]);
 }
-export async function api<T=any>(path:string,options:{method?:string;body?:unknown;token?:string}={}):Promise<T>{
+export async function api<T=any>(path:string,options:{method?:string;body?:unknown;token?:string;timeoutMs?:number}={}):Promise<T>{
   if(!path.startsWith("/abc/"))throw Error("Invalid ABC API path");
   const headers:Record<string,string>={Accept:"application/json"};
   if(options.body!==undefined)headers["Content-Type"]="application/json";
   const chosen=options.token??bearer;
   if(chosen)headers.Authorization="Bearer "+chosen;
   const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),95000);
+  const timer=setTimeout(()=>controller.abort(),options.timeoutMs??95000);
   let response:Response;
   try{
     response=await fetch(ROOT+path,{method:options.method||"GET",headers,
