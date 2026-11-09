@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {VoiceTurnCollector,audioLevels,humanTimer} from "../src/voice-turns.ts";
+import {VoiceTurnCollector,audioLevels,humanTimer,
+  shouldDrainStraySpeech,STRAY_SPEECH_QUIET_MS,STRAY_SPEECH_MAX_DRAIN_MS
+} from "../src/voice-turns.ts";
 
 test("fragments are assembled in delivery order without losing spaces",()=>{
  const x=new VoiceTurnCollector();
@@ -57,4 +59,15 @@ test("remote audio track levels are never mistaken for microphone speech",()=>{
  const result=audioLevels(stats);
  assert.equal(result.mic,null);
  assert.equal(result.speaker,null);
+});
+
+test("an unsolicited voice response must go quiet before the next authorized question",()=>{
+  const last=10000;
+  assert.equal(STRAY_SPEECH_QUIET_MS,1800);
+  assert.equal(STRAY_SPEECH_MAX_DRAIN_MS,5500);
+  assert.equal(shouldDrainStraySpeech(0,10100),false);
+  assert.equal(shouldDrainStraySpeech(last,last+100),true);
+  assert.equal(shouldDrainStraySpeech(last,last+1799),true);
+  assert.equal(shouldDrainStraySpeech(last,last+1800),false);
+  assert.equal(shouldDrainStraySpeech(last,last+3000),false);
 });
