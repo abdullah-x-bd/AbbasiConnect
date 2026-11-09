@@ -29,6 +29,28 @@ export function isVoiceAlreadyProvided(text:string):boolean{
     /\b(i (have|'ve|had) (already )?(answered|told|said|mentioned|shared|provided)|you (already )?(asked|have asked) (me )?that)\b/.test(t)||
     /\b(pehle( hi)? (bata|bataya|bola|keh|kah|de diya)|bata (diya|chuka|chuki)|bataya (tha|hai)|pehle hi jawab|already bata)\b/.test(t);
 }
+/**
+ * Asking what the questionnaire's own vocabulary means is on-topic.
+ * Handle this deterministically before AI classification so it never counts
+ * against the five genuinely unrelated requests allowed in a call.
+ * Only the location question activates this narrow glossary.
+ */
+export function voiceQuestionClarification(
+  text:string,questionPath:string,language:"en"|"roman"|"hi"|"ur"
+):string|null {
+  if(!["candidate.current_location.city","candidate.ancestral_location.city_or_town"].includes(questionPath))
+    return null;
+  const t=text.trim().toLocaleLowerCase();
+  const term=/(?:aab[ae]i|aaba[ae]i|aabaayi|abayi|abay|ab[a-z]*\s*shehar|ancestral|आबाई|आबाइ|अबाई|अभय\s*(?:शहर|शहेर)|آبائی|آبای)/iu.test(t);
+  const asking=/(?:matlab|meaning|mean\b|explain|samjha|samjh|kya\s+(?:hota|hai)|what\s+(?:is|does)|क्या.{0,18}(?:मतलब|है|होता)|मतलब|معنی|کیا\s+مطلب)/iu.test(t);
+  if(!term||!asking)return null;
+  switch(language){
+    case "en":return "Ancestral city means the town your family originally comes from. What is your current city, and your ancestral city or town?";
+    case "hi":return "आबाई शहर का मतलब वह शहर या कस्बा है जहाँ से आपका परिवार मूल रूप से आता है। बताइए, अभी का शहर और आबाई शहर क्या है?";
+    case "ur":return "آبائی شہر سے مراد وہ شہر یا قصبہ ہے جہاں سے آپ کا خاندان اصل میں آیا ہے۔ آپ کا موجودہ اور آبائی شہر کون سا ہے؟";
+    default:return "Aabai shehar ka matlab woh shehar ya qasba hai jahan se aapka khandaan asal mein aaya. Batayein: abhi ka shehar aur aabai shehar.";
+  }
+}
 export function isVoiceDistraction(x:VoiceClassification):boolean{
   return Boolean(x.off_topic)||x.classification==="OFF_TOPIC"||
     x.classification==="PARTIALLY_OFF_TOPIC";
