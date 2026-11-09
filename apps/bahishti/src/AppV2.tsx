@@ -958,6 +958,51 @@ function App(){
       </ScrollView>{footer("interests")}
     </View>;
   }
+  function matchPreferencesScreen(){
+    return <View style={st.page}>
+      {header("Match preferences",()=>setScreen("profile"),"Rishte ki pasand")}
+      <ScrollView contentContainerStyle={st.inner} keyboardShouldPersistTaps="handled">
+        <H en="Who would you like to meet?" roman="Aapki pasand kya hai?"/>
+        <Text style={[st.note,{marginBottom:20}]}>
+          These preferences help rank matches in both directions. They are optional and never change your original interview answers.
+        </Text>
+        <View style={{flexDirection:"row",gap:12}}>
+          <View style={{flex:1}}>
+            <Field label="Preferred age from" value={prefAgeMin} numeric
+              onChangeText={setPrefAgeMin} placeholder="21" maxLength={2}/>
+          </View>
+          <View style={{flex:1}}>
+            <Field label="Preferred age to" value={prefAgeMax} numeric
+              onChangeText={setPrefAgeMax} placeholder="30" maxLength={2}/>
+          </View>
+        </View>
+        <Field label="Preferred cities" roman="Pasandeeda sheher" value={prefCities}
+          onChangeText={setPrefCities} placeholder="Delhi, Aligarh, Lucknow"/>
+        <Text style={[st.note,{marginTop:-12,marginBottom:17}]}>
+          Separate multiple cities with commas. Delhi and Dilli are treated as the same city.
+        </Text>
+        <Text style={st.inputLabel}>Preferred marital status (optional)</Text>
+        <View style={{flexDirection:"row",flexWrap:"wrap",gap:8,marginBottom:20}}>
+          {["Any",...maritalOptions].map(value=>{
+            const selected=prefMarital===(value==="Any"?"":value);
+            return <Pressable key={value} accessibilityRole="button"
+              onPress={()=>setPrefMarital(value==="Any"?"":value)}
+              style={[st.chip,{paddingVertical:10,backgroundColor:selected?T.accent:T.light}]}>
+              <Text style={{fontSize:13,color:selected?T.white:T.ink}}>{value}</Text>
+            </Pressable>;
+          })}
+        </View>
+        <Field label="Preferred education" value={prefEducation}
+          onChangeText={setPrefEducation} placeholder="e.g. Bachelor's" maxLength={100}/>
+        <Field label="Preferred profession" value={prefOccupation}
+          onChangeText={setPrefOccupation} placeholder="e.g. teacher" maxLength={100}/>
+        <Btn en="Save match preferences" roman="Pasand save karein"
+          onPress={()=>void saveMatchPreferences()}/>
+        <View style={{height:12}}/>
+        <Btn en="Cancel" roman="Wapas" secondary onPress={()=>setScreen("profile")}/>
+      </ScrollView>
+    </View>;
+  }
   function profileScreen(){
     return <View style={st.page}>
       <View style={[styles.exploreHeader,{flexDirection:"row",alignItems:"center"}]}>
@@ -991,6 +1036,25 @@ function App(){
             <Text style={[st.sub,{color:T.ink,marginTop:2}]}>{formatValue(readAt(profile,x))}</Text>
           </View>)}
         </View>
+        <View style={{height:18}}/>
+        <View style={[st.card,{backgroundColor:account?.visible?T.white:T.soft}]}>
+          <Text style={styles.groupTitle}>Profile visibility</Text>
+          <Text style={[st.sub,{marginTop:2}]}>
+            {account?.visible?"Published: compatible members can discover your profile.":
+              "Private: your profile is hidden from other members."}
+          </Text>
+          <Text style={[st.note,{marginTop:6,marginBottom:13}]}>
+            {account?.member?.phoneVerified?
+              "Phone number verified.":
+              "Pilot account: phone number not yet SMS verified. Publishing is optional."}
+          </Text>
+          <Btn en={account?.visible?"Make profile private":"Publish my profile"}
+            roman={account?.visible?"Profile chhupayein":"Meri profile dikhayein"}
+            compact secondary onPress={()=>void togglePublished(!account?.visible)}/>
+        </View>
+        <View style={{height:12}}/>
+        <Btn en="My Match Preferences" roman="Munasib rishte ki pasand"
+          secondary onPress={openMatchPreferences}/>
         <View style={{height:18}}/>
         <Btn en="Download Bio Data" roman="Biodata JPEG banayein" onPress={()=>void openBiodata("profile")}/>
         <View style={{height:12}}/>
@@ -1227,6 +1291,7 @@ function App(){
     if(screen==="explore")return showExplore();
     if(screen==="interests")return interestsScreen();
     if(screen==="profile")return profileScreen();
+    if(screen==="matchPreferences")return matchPreferencesScreen();
     return null;
   }
   return <SafeAreaProvider>
@@ -1261,6 +1326,14 @@ const styles=StyleSheet.create({
   exploreHeader:{paddingHorizontal:22,paddingTop:18,paddingBottom:15},
   search:{borderWidth:1,borderColor:T.border,borderRadius:16,paddingHorizontal:15,minHeight:53,
     flexDirection:"row",alignItems:"center",marginBottom:24,backgroundColor:T.white},
+  exploreActions:{flexDirection:"row",gap:10,paddingHorizontal:20,paddingVertical:10,
+    backgroundColor:T.paper,borderTopColor:T.line,borderTopWidth:1},
+  exploreActionButton:{flex:1,borderWidth:1,borderColor:T.border,backgroundColor:T.white,
+    minHeight:46,borderRadius:13,alignItems:"center",justifyContent:"center"},
+  exploreActionText:{color:T.accent,fontSize:15,fontWeight:"700"},
+  modalBackdrop:{flex:1,justifyContent:"flex-end",backgroundColor:"rgba(15,35,22,.43)"},
+  modalSheet:{backgroundColor:T.paper,paddingHorizontal:23,paddingTop:25,paddingBottom:33,
+    borderTopLeftRadius:25,borderTopRightRadius:25,maxHeight:"88%"},
   avatar:{width:55,height:55,borderRadius:28,backgroundColor:T.light,alignItems:"center",justifyContent:"center"},
   empty:{marginVertical:10,paddingVertical:18,paddingHorizontal:18,borderWidth:1,borderColor:T.border,
     borderRadius:18,backgroundColor:T.white},
