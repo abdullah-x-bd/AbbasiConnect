@@ -13,7 +13,7 @@ import { renderBiodataJpeg,BIODATA_WIDTH,BIODATA_HEIGHT } from "./biodata.js";
 import {voiceTelemetryBatchSchema,safeAssistantPreview,safeVoiceDetail,VOICE_EVENT_RETENTION_DAYS} from "./voice-telemetry.js";
 import {
   VOICE_MAX_DURATION_MS,VOICE_STARTED_KEY,VOICE_ALLOWED_OFF_TOPIC,
-  unrelatedCount,countVoiceReply,voiceCallExpired,isVoiceRepeatRequest,isVoiceAlreadyProvided,
+  unrelatedCount,countVoiceReply,voiceCallExpired,isVoiceRepeatRequest,isVoiceAlreadyProvided,voiceQuestionClarification,
   VOICE_WAIT_STARTED_KEY,VOICE_NO_ANSWER_KEY,voiceNoAnswerDecision
 } from "./voice-policy.js";
 
@@ -138,7 +138,7 @@ export async function registerAbcRoutes(app:FastifyInstance){
     ok:true,service:"abbasi-bahishti-connections",aiConfigured:openRouterConfigured(),
     smsConfigured:Boolean(process.env.ABC_SMS_NUMBER&&process.env.ABC_SMS_WEBHOOK_SECRET),
     model:process.env.ABC_OPENROUTER_MODEL||"google/gemini-3.1-flash-lite",
-    voiceContract:"canonical-question-v2.2",voiceTelemetryContract:"supabase-audit-v1"
+    voiceContract:"canonical-question-v2.3",voiceTelemetryContract:"supabase-audit-v1"
   }));
 
   // An early, rate-limited duplicate-number check, before verification or PIN.
@@ -443,6 +443,19 @@ export async function registerAbcRoutes(app:FastifyInstance){
     // Recovery works in both Voice Call and Chat; changing input modes must
     // never reintroduce a previously answered-question loop.
     const wasAlreadyProvided=isVoiceAlreadyProvided(userText);
+    const glossaryReply=voiceQuestionClarification(userText,target,lang);
+    if(glossaryReply){
+      // Terminology used in the current question is a legitimate clarification.
+      // Do not invoke the extractor, increment the unrelated count, or advance
+      // the questionnaire. Voice receives exactly one approved explanation.
+      const declines={...d.declines,[VOICE_WAIT_STARTED_KEY]:0,[VOICE_NO_ANSWER_KEY]:0};
+      if(turnKey)declines[turnKey]=1;
+      const saved=await store(d,{declines,messages:safeHistory([...d.messages,
+        note("user",userText,target),note("assistant",shortMessage(glossaryReply),target)])});
+      return {session:client(saved),changesAccepted:0,classification:"CLARIFICATION",
+        ...(isVoice?{authorizedVoiceReply:glossaryReply,
+          voiceDistractionCount:unrelatedCount(declines),voiceTermination:null}:{})};
+    }
     if(isVoice&&isVoiceRepeatRequest(userText)){
       // Repeat requests are legitimate interviewing controls, not distractions.
       // Preserve the current question without sending an extra extraction call.
@@ -578,10 +591,16 @@ export async function registerAbcRoutes(app:FastifyInstance){
             "Pehla jawab pakka nahi mil saka, abhi isse chhodte hain. ");
         message=prefix+message;
       }
-      if(!count&&extracted.classification==="AMBIGUOUS"){
+      if(!count&&extracted.classification==="AMBIGUOUS"&&!isVoice){
         const talk=await interview({ctx:{profile,fieldStates:states,currentQuestion:next.path,recent:history,language:lang},
           next,directive,validationIssue:issue||extracted.clarification,latestUserMessage:userText});
         message=talk.message;
+      }
+      if(isVoice&&!count&&(extracted.off_topic||
+           ["AMBIGUOUS","OFF_TOPIC","PARTIALLY_OFF_TOPIC"].includes(extracted.classification))){
+        // A model-generated clarification is never authorized spoken script:
+        // it may contain internal reasoning, extra fields or unrelated advice.
+        message=next.ask[lang];
       }
     }else message="Your answers are saved.";
     if(endForDistractions){
